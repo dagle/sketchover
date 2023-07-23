@@ -11,7 +11,7 @@ support it.
 
 ## Install
 
-Atm it's not on cargo, so you will need to install it manually
+Atm it's not a registered crate, so you will need to install it manually
 
 cargo install --path .
 

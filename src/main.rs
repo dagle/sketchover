@@ -1,15 +1,16 @@
+// use cursor_icon::CursorIcon;
 use hex_color::{HexColor, ParseHexColorError};
-use raqote::{SolidSource, Transform};
+use raqote::{SolidSource, StrokeStyle};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
     delegate_registry, delegate_seat, delegate_shm,
-    output::{OutputHandler, OutputState},
+    output::{OutputHandler, OutputInfo, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
         keyboard::{KeyEvent, KeyboardHandler, Modifiers},
-        pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        pointer::{PointerEvent, PointerEventKind, PointerHandler, ThemedPointer},
         Capability, SeatHandler, SeatState,
     },
     shell::{
@@ -29,6 +30,8 @@ use wayland_client::{
 use xkbcommon::xkb::keysyms;
 
 use clap::{Parser, ValueEnum};
+
+// const CURSORS: &[CursorIcon] = &[CursorIcon::Default, CursorIcon::Crosshair];
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -67,45 +70,38 @@ fn parse_solid(str: &str) -> Result<SolidSource, ParseHexColorError> {
 fn main() {
     env_logger::init();
     let config = Config::parse();
-    println!("palette: {:?}", config.palette);
 
-    // All Wayland apps start by connecting the compositor (server).
     let conn = Connection::connect_to_env().unwrap();
 
-    // Enumerate the list of globals to get the protocols the server implements.
     let (globals, mut event_queue) = registry_queue_init(&conn).unwrap();
     let qh = event_queue.handle();
 
-    // The compositor (not to be confused with the server which is commonly called the compositor) allows
-    // configuring surfaces to be presented.
-    let compositor = CompositorState::bind(&globals, &qh).expect("wl_compositor is not available");
-    // This app uses the wlr layer shell, which may not be available with every compositor.
+    let registry_state = RegistryState::new(&globals);
+
+    let output_state = OutputState::new(&globals, &qh);
+
+    let seat_state = SeatState::new(&globals, &qh);
+
+    // let compositor = CompositorState::bind(&globals, &qh).expect("wl_compositor is not available");
+
+    // We don't need this one atm bu we will the future to set the set the cursor icon
+    let compositor_state =
+        CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
     let layer_shell = LayerShell::bind(&globals, &qh).expect("layer shell is not available");
-    // Since we are not using the GPU in this example, we use wl_shm to allow software rendering to a buffer
-    // we share with the compositor process.
+
     let shm = Shm::bind(&globals, &qh).expect("wl_shm is not available");
 
-    // A layer surface is created from a surface.
-    let surface = compositor.create_surface(&qh);
+    let surface = compositor_state.create_surface(&qh);
 
-    // And then we create the layer shell.
     let layer =
         layer_shell.create_layer_surface(&qh, surface, Layer::Top, Some("simple_layer"), None);
-    // Configure the layer surface, providing things like the anchor on screen, desired size and the keyboard
-    // interactivity
+
     layer.set_anchor(Anchor::TOP);
     layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
     layer.set_size(1280, 1024);
 
-    // In order for the layer surface to be mapped, we need to perform an initial commit with no attached\
-    // buffer. For more info, see WaylandSurface::commit
-    //
-    // The compositor will respond with an initial configure that we can then use to present to the layer
-    // surface with the correct options.
     layer.commit();
 
-    // We don't know how large the window will be yet, so lets assume the minimum size we suggested for the
-    // initial memory allocation.
     let pool = SlotPool::new(1280 * 1024 * 4, &shm).expect("Failed to create pool");
 
     let fgcolor = parse_solid(&config.foreground).expect("Couldn't parse foreground color");
@@ -117,19 +113,15 @@ fn main() {
         let color = parse_solid(&c).expect("Couldn't parse palette color");
         palette.push(color);
     }
-    // let draw_color = parse_solid(&config.color).expect("Couldn't parse draw color");
 
-    // let fgcolor = config.foreground.try_into().expect("apa");
-
-    let mut simple_layer = SimpleLayer {
-        // Seats and outputs may be hotplugged at runtime, therefore we need to setup a registry state to
-        // listen for seats and outputs.
-        registry_state: RegistryState::new(&globals),
-        seat_state: SeatState::new(&globals, &qh),
-        output_state: OutputState::new(&globals, &qh),
+    let mut sketch_over = SketchOver {
+        registry_state,
+        seat_state,
+        output_state,
+        compositor_state,
+        layer_shell,
         shm,
 
-        clear: true,
         exit: false,
         drawing: false,
         first_configure: true,
@@ -140,60 +132,69 @@ fn main() {
         keyboard: None,
         keyboard_focus: false,
         pointer: None,
-        draws: Vec::new(),
         fgcolor,
         modifiers: Modifiers::default(),
-        draw_color,
         palette,
         palette_index: 0,
-        // fgcolor,
+        current_style: StrokeStyle::default(),
         kind: config.starting_tool,
+        themed_pointer: None,
+        current_screen: 0,
+        outputs: Vec::new(),
     };
 
-    // We don't draw immediately, the configure will notify us when to first draw.
     loop {
-        event_queue.blocking_dispatch(&mut simple_layer).unwrap();
+        event_queue.blocking_dispatch(&mut sketch_over).unwrap();
 
-        if simple_layer.exit {
+        if sketch_over.exit {
             break;
         }
     }
 }
 
-struct SimpleLayer {
+struct SketchOver {
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
+    compositor_state: CompositorState,
     shm: Shm,
+    outputs: Vec<OutPut>,
 
-    clear: bool,
     exit: bool,
     drawing: bool,
     first_configure: bool,
     pool: SlotPool,
     width: u32,
     height: u32,
+    layer_shell: LayerShell,
     layer: LayerSurface,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     keyboard_focus: bool,
     pointer: Option<wl_pointer::WlPointer>,
     fgcolor: raqote::SolidSource,
-    draw_color: raqote::SolidSource,
     palette_index: usize,
     palette: Vec<raqote::SolidSource>,
-    draws: Vec<Draw>,
+    current_screen: usize,
+    // draws: Vec<Draw>,
     kind: DrawKind,
     modifiers: Modifiers,
+    current_style: StrokeStyle,
+    themed_pointer: Option<ThemedPointer>,
+}
+
+struct OutPut {
+    info: OutputInfo,
+    pool: SlotPool,
+    layer: LayerSurface,
+    configured: bool,
+    draws: Vec<Draw>,
 }
 
 struct Draw {
     start: (f64, f64),
-    size: u32,
+    style: StrokeStyle,
     color: raqote::SolidSource,
     action: DrawAction,
-    // draw style (solid, dotted, etc)
-    //
-    // lines: Vec<(f64, f64)>,
 }
 
 impl Draw {
@@ -224,17 +225,7 @@ enum DrawAction {
     Circle(f64, f64),
 }
 
-// struct Pen {
-//     strokes: Vec<(f64, f64)>,
-// }
-
-// impl Draw {
-//     fn new() -> Self {
-//         Draw { lines: Vec::new() }
-//     }
-// }
-
-impl CompositorHandler for SimpleLayer {
+impl CompositorHandler for SketchOver {
     fn scale_factor_changed(
         &mut self,
         _conn: &Connection,
@@ -242,21 +233,20 @@ impl CompositorHandler for SimpleLayer {
         _surface: &wl_surface::WlSurface,
         _new_factor: i32,
     ) {
-        // Not needed for this example.
     }
 
     fn frame(
         &mut self,
         _conn: &Connection,
         qh: &QueueHandle<Self>,
-        _surface: &wl_surface::WlSurface,
+        surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        self.draw(qh);
+        self.draw(qh, surface);
     }
 }
 
-impl OutputHandler for SimpleLayer {
+impl OutputHandler for SketchOver {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output_state
     }
@@ -264,9 +254,42 @@ impl OutputHandler for SimpleLayer {
     fn new_output(
         &mut self,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
+        qh: &QueueHandle<Self>,
+        output: wl_output::WlOutput,
     ) {
+        let surface = self.compositor_state.create_surface(&qh);
+        let layer = self.layer_shell.create_layer_surface(
+            &qh,
+            surface,
+            Layer::Top,
+            Some("sketchover"),
+            None,
+        );
+
+        // TODO: handle errors better
+        let info = self.output_state.info(&output).unwrap();
+        let logical = info.logical_size.unwrap();
+
+        let width = logical.0 as u32;
+        let height = logical.1 as u32;
+        println!("w: {:?}, h: {:?}", width, height);
+        layer.set_anchor(Anchor::TOP);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        layer.set_size(width, height);
+
+        layer.commit();
+
+        let pool = SlotPool::new(width as usize * height as usize * 4, &self.shm)
+            .expect("Failed to create pool");
+
+        let output = OutPut {
+            info,
+            pool,
+            layer,
+            configured: false,
+            draws: Vec::new(),
+        };
+        self.outputs.push(output);
     }
 
     fn update_output(
@@ -275,6 +298,10 @@ impl OutputHandler for SimpleLayer {
         _qh: &QueueHandle<Self>,
         _output: wl_output::WlOutput,
     ) {
+        // let output = self
+        //     .outputs
+        //     .iter_mut()
+        //     .find(|x| x.layer.wl_surface() == &surface);
     }
 
     fn output_destroyed(
@@ -286,7 +313,7 @@ impl OutputHandler for SimpleLayer {
     }
 }
 
-impl LayerShellHandler for SimpleLayer {
+impl LayerShellHandler for SketchOver {
     fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
         self.exit = true;
     }
@@ -295,7 +322,7 @@ impl LayerShellHandler for SimpleLayer {
         &mut self,
         _conn: &Connection,
         qh: &QueueHandle<Self>,
-        _layer: &LayerSurface,
+        layer: &LayerSurface,
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
@@ -307,15 +334,14 @@ impl LayerShellHandler for SimpleLayer {
             self.height = configure.new_size.1;
         }
 
-        // Initiate the first draw.
         if self.first_configure {
             self.first_configure = false;
-            self.draw(qh);
+            self.draw(qh, layer.wl_surface());
         }
     }
 }
 
-impl SeatHandler for SimpleLayer {
+impl SeatHandler for SketchOver {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.seat_state
     }
@@ -344,6 +370,23 @@ impl SeatHandler for SimpleLayer {
                 .expect("Failed to create pointer");
             self.pointer = Some(pointer);
         }
+
+        // TODO: add this when 0.18 is out, I don't want to support the old API
+        // if capability == Capability::Pointer && self.themed_pointer.is_none() {
+        //     println!("Set pointer capability");
+        //     let surface = self.compositor_state.create_surface(qh);
+        //     let themed_pointer = self
+        //         .seat_state
+        //         .get_pointer_with_theme(
+        //             qh,
+        //             &seat,
+        //             self.shm_state.wl_shm(),
+        //             surface,
+        //             ThemeSpec::default(),
+        //         )
+        //         .expect("Failed to create pointer");
+        //     self.themed_pointer.replace(themed_pointer);
+        // }
     }
 
     fn remove_capability(
@@ -365,7 +408,7 @@ impl SeatHandler for SimpleLayer {
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 }
 
-impl KeyboardHandler for SimpleLayer {
+impl KeyboardHandler for SketchOver {
     fn enter(
         &mut self,
         _: &Connection,
@@ -374,7 +417,7 @@ impl KeyboardHandler for SimpleLayer {
         surface: &wl_surface::WlSurface,
         _: u32,
         _: &[u32],
-        keysyms: &[u32],
+        _keysyms: &[u32],
     ) {
         if self.layer.wl_surface() == surface {
             self.keyboard_focus = true;
@@ -406,15 +449,29 @@ impl KeyboardHandler for SimpleLayer {
             keysyms::KEY_Escape => {
                 self.exit = true;
             }
-            keysyms::KEY_c => {
-                self.clear = true;
-                self.draws = Vec::new();
-            }
-            keysyms::KEY_u => {
-                self.draws.pop();
-            }
+            // keysyms::KEY_c => {
+            //     self.draws = Vec::new();
+            // }
+            // keysyms::KEY_u => {
+            //     self.draws.pop();
+            // }
             keysyms::KEY_n => {
                 self.next_color();
+            }
+            keysyms::KEY_N => {
+                self.prev_color();
+            }
+            keysyms::KEY_t => {
+                self.next_tool();
+            }
+            keysyms::KEY_T => {
+                self.prev_tool();
+            }
+            keysyms::KEY_plus => {
+                self.increase_size();
+            }
+            keysyms::KEY_minus => {
+                self.decrease_size();
             }
             _ => {}
         }
@@ -429,7 +486,7 @@ impl KeyboardHandler for SimpleLayer {
         _: &QueueHandle<Self>,
         _: &wl_keyboard::WlKeyboard,
         _: u32,
-        event: KeyEvent,
+        _event: KeyEvent,
     ) {
     }
 
@@ -445,7 +502,7 @@ impl KeyboardHandler for SimpleLayer {
     }
 }
 
-impl PointerHandler for SimpleLayer {
+impl PointerHandler for SketchOver {
     fn pointer_frame(
         &mut self,
         _conn: &Connection,
@@ -460,66 +517,113 @@ impl PointerHandler for SimpleLayer {
                 continue;
             }
             match event.kind {
-                Enter { .. } => {}
+                Enter { .. } => {
+                    // TODO: add this when 0.18 is out, I don't want to support the old API
+                    // if let Some(themed_pointer) = self.themed_pointer.as_mut() {
+                    //     themed_pointer.set_cursor(conn, cursor_icon);
+                    // }
+                }
                 Leave { .. } => {}
                 Motion { .. } => {
-                    if self.drawing {
-                        if let Some(last) = self.draws.last_mut() {
-                            last.add_motion(event.position);
+                    if let Some(output) = self
+                        .outputs
+                        .iter_mut()
+                        .find(|x| x.layer.wl_surface() == &event.surface)
+                    {
+                        if self.drawing {
+                            if let Some(last) = output.draws.last_mut() {
+                                last.add_motion(event.position);
+                            }
                         }
                     }
                 }
-                Press { button, .. } => {
+                Press { .. } => {
                     self.drawing = true;
 
-                    let action = match self.kind {
-                        DrawKind::Pen => DrawAction::Pen(Vec::new()),
-                        DrawKind::Line => DrawAction::Line(event.position.0, event.position.1),
-                        DrawKind::Box => DrawAction::Box(5.0, 5.0),
-                        DrawKind::Circle => DrawAction::Circle(event.position.0, event.position.1),
-                    };
-                    let draw = Draw {
-                        start: event.position,
-                        size: 5,
-                        color: self.draw_color,
-                        action,
-                    };
-                    self.draws.push(draw);
+                    if let Some(output) = self
+                        .outputs
+                        .iter_mut()
+                        .find(|x| x.layer.wl_surface() == &event.surface)
+                    {
+                        let action = match self.kind {
+                            DrawKind::Pen => DrawAction::Pen(Vec::new()),
+                            DrawKind::Line => DrawAction::Line(event.position.0, event.position.1),
+                            DrawKind::Box => DrawAction::Box(5.0, 5.0),
+                            DrawKind::Circle => DrawAction::Circle(5.0, 5.0),
+                        };
+                        let draw = Draw {
+                            start: event.position,
+                            style: self.current_style.clone(),
+                            color: self.palette[self.palette_index],
+                            action,
+                        };
+                        output.draws.push(draw);
+                    }
                 }
-                Release { button, .. } => {
+                Release { .. } => {
                     self.drawing = false;
                 }
-                Axis {
-                    horizontal,
-                    vertical,
-                    ..
-                } => {
-                    println!("Scroll H:{horizontal:?}, V:{vertical:?}");
-                }
+                Axis { .. } => {}
             }
         }
     }
 }
 
-impl ShmHandler for SimpleLayer {
+impl ShmHandler for SketchOver {
     fn shm_state(&mut self) -> &mut Shm {
         &mut self.shm
     }
 }
 
-impl SimpleLayer {
+impl SketchOver {
     pub fn next_color(&mut self) {
         let len = self.palette.len();
         self.palette_index = (self.palette_index + 1) % len;
-
-        self.draw_color = self.palette[self.palette_index];
     }
-    pub fn draw(&mut self, qh: &QueueHandle<Self>) {
+
+    pub fn prev_color(&mut self) {
+        let len = self.palette.len();
+        self.palette_index = if self.palette_index == 0 && len > 0 {
+            len - 1
+        } else {
+            self.palette_index - 1
+        };
+    }
+
+    pub fn next_tool(&mut self) {
+        self.kind = match self.kind {
+            DrawKind::Pen => DrawKind::Line,
+            DrawKind::Line => DrawKind::Box,
+            DrawKind::Box => DrawKind::Circle,
+            DrawKind::Circle => DrawKind::Pen,
+        };
+    }
+
+    pub fn prev_tool(&mut self) {
+        self.kind = match self.kind {
+            DrawKind::Pen => DrawKind::Circle,
+            DrawKind::Line => DrawKind::Pen,
+            DrawKind::Box => DrawKind::Line,
+            DrawKind::Circle => DrawKind::Box,
+        };
+    }
+
+    pub fn increase_size(&mut self) {
+        self.current_style.width += 1.;
+    }
+
+    pub fn decrease_size(&mut self) {
+        self.current_style.width -= 1.;
+        if self.current_style.width < 0. {
+            self.current_style.width = 1.;
+        }
+    }
+
+    pub fn draw(&mut self, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface) {
         let width = self.width;
         let height = self.height;
         let stride = self.width as i32 * 4;
 
-        // let mut pool = self.pool;
         let (buffer, canvas) = self
             .pool
             .create_buffer(
@@ -535,61 +639,64 @@ impl SimpleLayer {
             height as i32,
             bytemuck::cast_slice_mut(canvas),
         );
-        // if self.clear {
         dt.clear(self.fgcolor);
-        self.clear = false;
-        // }
 
-        for draw in self.draws.iter() {
-            let mut pb = raqote::PathBuilder::new();
-            pb.move_to(draw.start.0 as f32, draw.start.1 as f32);
-            match draw.action {
-                DrawAction::Pen(ref pen) => {
-                    for stroke in pen {
-                        pb.line_to(stroke.0 as f32, stroke.1 as f32);
-                        pb.move_to(stroke.0 as f32, stroke.1 as f32);
+        if let Some(output) = self
+            .outputs
+            .iter()
+            .find(|x| x.layer.wl_surface() == surface)
+        {
+            for draw in output.draws.iter() {
+                let mut pb = raqote::PathBuilder::new();
+                pb.move_to(draw.start.0 as f32, draw.start.1 as f32);
+                match draw.action {
+                    DrawAction::Pen(ref pen) => {
+                        for stroke in pen {
+                            pb.line_to(stroke.0 as f32, stroke.1 as f32);
+                            pb.move_to(stroke.0 as f32, stroke.1 as f32);
+                        }
+                        pb.close();
                     }
-                    pb.close();
+                    DrawAction::Line(x, y) => {
+                        pb.line_to(x as f32, y as f32);
+                    }
+                    DrawAction::Box(w, h) => {
+                        pb.rect(draw.start.0 as f32, draw.start.1 as f32, w as f32, h as f32);
+                    }
+                    DrawAction::Circle(_, _) => {
+                        pb.arc(
+                            draw.start.0 as f32,
+                            draw.start.1 as f32,
+                            20.,
+                            0. * std::f32::consts::PI,
+                            4. * std::f32::consts::PI,
+                        );
+                    }
                 }
-                DrawAction::Line(x, y) => {
-                    pb.line_to(x as f32, y as f32);
-                }
-                DrawAction::Box(w, h) => {
-                    pb.rect(draw.start.0 as f32, draw.start.1 as f32, w as f32, h as f32);
-                }
-                DrawAction::Circle(_, _) => {
-                    pb.arc(
-                        draw.start.0 as f32,
-                        draw.start.1 as f32,
-                        20.,
-                        0. * std::f32::consts::PI,
-                        4. * std::f32::consts::PI,
-                    );
-                }
+                dt.stroke(
+                    &pb.finish(),
+                    &raqote::Source::Solid(draw.color),
+                    &draw.style,
+                    &raqote::DrawOptions::new(),
+                );
             }
-            dt.stroke(
-                &pb.finish(),
-                &raqote::Source::Solid(draw.color),
-                &raqote::StrokeStyle::default(),
-                &raqote::DrawOptions::new(),
-            );
+
+            // Damage the entire window
+            self.layer
+                .wl_surface()
+                .damage_buffer(0, 0, width as i32, height as i32);
+
+            // Request our next frame
+            self.layer
+                .wl_surface()
+                .frame(qh, self.layer.wl_surface().clone());
+
+            // Attach and commit to present.
+            buffer
+                .attach_to(self.layer.wl_surface())
+                .expect("buffer attach");
+            self.layer.commit();
         }
-
-        // Damage the entire window
-        self.layer
-            .wl_surface()
-            .damage_buffer(0, 0, width as i32, height as i32);
-
-        // Request our next frame
-        self.layer
-            .wl_surface()
-            .frame(qh, self.layer.wl_surface().clone());
-
-        // Attach and commit to present.
-        buffer
-            .attach_to(self.layer.wl_surface())
-            .expect("buffer attach");
-        self.layer.commit();
 
         // TODO save and reuse buffer when the window size is unchanged.  This is especially
         // useful if you do damage tracking, since you don't need to redraw the undamaged parts
@@ -597,19 +704,19 @@ impl SimpleLayer {
     }
 }
 
-delegate_compositor!(SimpleLayer);
-delegate_output!(SimpleLayer);
-delegate_shm!(SimpleLayer);
+delegate_registry!(SketchOver);
 
-delegate_seat!(SimpleLayer);
-delegate_keyboard!(SimpleLayer);
-delegate_pointer!(SimpleLayer);
+delegate_compositor!(SketchOver);
+delegate_output!(SketchOver);
+delegate_shm!(SketchOver);
 
-delegate_layer!(SimpleLayer);
+delegate_seat!(SketchOver);
+delegate_keyboard!(SketchOver);
+delegate_pointer!(SketchOver);
 
-delegate_registry!(SimpleLayer);
+delegate_layer!(SketchOver);
 
-impl ProvidesRegistryState for SimpleLayer {
+impl ProvidesRegistryState for SketchOver {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry_state
     }

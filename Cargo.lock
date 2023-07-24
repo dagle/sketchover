@@ -252,6 +252,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cursor-icon"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "740bb192a8e2d1350119916954f4409ee7f62f149b536911eeb78ba5a20526bf"
+
+[[package]]
 name = "dirs-next"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -875,6 +881,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "clap",
+ "cursor-icon",
  "env_logger",
  "hex_color",
  "log",

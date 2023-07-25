@@ -109,7 +109,6 @@ fn main() {
 
         exit: false,
         drawing: false,
-        first_configure: true,
         keyboard: None,
         keyboard_focus: false,
         pointer: None,
@@ -143,7 +142,7 @@ struct SketchOver {
 
     exit: bool,
     drawing: bool,
-    first_configure: bool,
+    // first_configure: bool,
     layer_shell: LayerShell,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     keyboard_focus: bool,
@@ -306,15 +305,16 @@ impl LayerShellHandler for SketchOver {
         _serial: u32,
     ) {
         if let Some(output) = self.outputs.iter_mut().find(|x| &x.layer == layer) {
+            if output.configured {
+                return;
+            }
             if configure.new_size.0 == 0 || configure.new_size.1 == 0 {
             } else {
                 output.width = configure.new_size.0;
                 output.height = configure.new_size.1;
             }
-        }
 
-        if self.first_configure {
-            self.first_configure = false;
+            output.configured = true;
             self.draw(qh, layer.wl_surface());
         }
     }

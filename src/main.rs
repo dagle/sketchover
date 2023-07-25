@@ -179,8 +179,8 @@ impl Draw {
         match self.action {
             DrawAction::Pen(ref mut pen) => pen.push(motion),
             DrawAction::Line(_, _) => self.action = DrawAction::Line(motion.0, motion.1),
-            DrawAction::Box(_, _) => {
-                self.action = DrawAction::Box(motion.0 - self.start.0, motion.1 - self.start.1)
+            DrawAction::Rect(_, _) => {
+                self.action = DrawAction::Rect(motion.0 - self.start.0, motion.1 - self.start.1)
             }
             DrawAction::Circle(_, _) => self.action = DrawAction::Circle(motion.0, motion.1),
         }
@@ -191,14 +191,14 @@ impl Draw {
 enum DrawKind {
     Pen,
     Line,
-    Box,
+    Rect,
     Circle,
 }
 
 enum DrawAction {
     Pen(Vec<(f64, f64)>),
     Line(f64, f64),
-    Box(f64, f64),
+    Rect(f64, f64),
     Circle(f64, f64),
 }
 
@@ -532,7 +532,7 @@ impl PointerHandler for SketchOver {
                         let action = match self.kind {
                             DrawKind::Pen => DrawAction::Pen(Vec::new()),
                             DrawKind::Line => DrawAction::Line(event.position.0, event.position.1),
-                            DrawKind::Box => DrawAction::Box(5.0, 5.0),
+                            DrawKind::Rect => DrawAction::Rect(5.0, 5.0),
                             DrawKind::Circle => DrawAction::Circle(5.0, 5.0),
                         };
                         let draw = Draw {
@@ -577,8 +577,8 @@ impl SketchOver {
     pub fn next_tool(&mut self) {
         self.kind = match self.kind {
             DrawKind::Pen => DrawKind::Line,
-            DrawKind::Line => DrawKind::Box,
-            DrawKind::Box => DrawKind::Circle,
+            DrawKind::Line => DrawKind::Rect,
+            DrawKind::Rect => DrawKind::Circle,
             DrawKind::Circle => DrawKind::Pen,
         };
     }
@@ -587,8 +587,8 @@ impl SketchOver {
         self.kind = match self.kind {
             DrawKind::Pen => DrawKind::Circle,
             DrawKind::Line => DrawKind::Pen,
-            DrawKind::Box => DrawKind::Line,
-            DrawKind::Circle => DrawKind::Box,
+            DrawKind::Rect => DrawKind::Line,
+            DrawKind::Circle => DrawKind::Rect,
         };
     }
 
@@ -656,7 +656,7 @@ impl SketchOver {
                     DrawAction::Line(x, y) => {
                         pb.line_to(x as f32, y as f32);
                     }
-                    DrawAction::Box(w, h) => {
+                    DrawAction::Rect(w, h) => {
                         pb.rect(draw.start.0 as f32, draw.start.1 as f32, w as f32, h as f32);
                     }
                     DrawAction::Circle(_, _) => {

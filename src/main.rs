@@ -82,27 +82,12 @@ fn main() {
 
     let seat_state = SeatState::new(&globals, &qh);
 
-    // let compositor = CompositorState::bind(&globals, &qh).expect("wl_compositor is not available");
-
     // We don't need this one atm bu we will the future to set the set the cursor icon
     let compositor_state =
         CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
     let layer_shell = LayerShell::bind(&globals, &qh).expect("layer shell is not available");
 
     let shm = Shm::bind(&globals, &qh).expect("wl_shm is not available");
-
-    let surface = compositor_state.create_surface(&qh);
-
-    let layer =
-        layer_shell.create_layer_surface(&qh, surface, Layer::Top, Some("simple_layer"), None);
-
-    layer.set_anchor(Anchor::TOP);
-    layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
-    layer.set_size(1280, 1024);
-
-    layer.commit();
-
-    let pool = SlotPool::new(1280 * 1024 * 4, &shm).expect("Failed to create pool");
 
     let fgcolor = parse_solid(&config.foreground).expect("Couldn't parse foreground color");
     let draw_color = parse_solid(&config.color).expect("Couldn't parse draw color");
@@ -125,10 +110,6 @@ fn main() {
         exit: false,
         drawing: false,
         first_configure: true,
-        pool,
-        width: 1280,
-        height: 1024,
-        layer,
         keyboard: None,
         keyboard_focus: false,
         pointer: None,
@@ -163,11 +144,7 @@ struct SketchOver {
     exit: bool,
     drawing: bool,
     first_configure: bool,
-    pool: SlotPool,
-    width: u32,
-    height: u32,
     layer_shell: LayerShell,
-    layer: LayerSurface,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     keyboard_focus: bool,
     pointer: Option<wl_pointer::WlPointer>,
@@ -175,7 +152,6 @@ struct SketchOver {
     palette_index: usize,
     palette: Vec<raqote::SolidSource>,
     current_screen: usize,
-    // draws: Vec<Draw>,
     kind: DrawKind,
     modifiers: Modifiers,
     current_style: StrokeStyle,
@@ -183,6 +159,8 @@ struct SketchOver {
 }
 
 struct OutPut {
+    width: u32,
+    height: u32,
     info: OutputInfo,
     pool: SlotPool,
     layer: LayerSurface,
@@ -263,7 +241,7 @@ impl OutputHandler for SketchOver {
             surface,
             Layer::Top,
             Some("sketchover"),
-            None,
+            Some(&output),
         );
 
         // TODO: handle errors better
@@ -272,7 +250,6 @@ impl OutputHandler for SketchOver {
 
         let width = logical.0 as u32;
         let height = logical.1 as u32;
-        println!("w: {:?}, h: {:?}", width, height);
         layer.set_anchor(Anchor::TOP);
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         layer.set_size(width, height);
@@ -283,6 +260,8 @@ impl OutputHandler for SketchOver {
             .expect("Failed to create pool");
 
         let output = OutPut {
+            width,
+            height,
             info,
             pool,
             layer,
@@ -326,12 +305,12 @@ impl LayerShellHandler for SketchOver {
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        if configure.new_size.0 == 0 || configure.new_size.1 == 0 {
-            self.width = 1280;
-            self.height = 1024;
-        } else {
-            self.width = configure.new_size.0;
-            self.height = configure.new_size.1;
+        if let Some(output) = self.outputs.iter_mut().find(|x| &x.layer == layer) {
+            if configure.new_size.0 == 0 || configure.new_size.1 == 0 {
+            } else {
+                output.width = configure.new_size.0;
+                output.height = configure.new_size.1;
+            }
         }
 
         if self.first_configure {
@@ -419,7 +398,12 @@ impl KeyboardHandler for SketchOver {
         _: &[u32],
         _keysyms: &[u32],
     ) {
-        if self.layer.wl_surface() == surface {
+        if self
+            .outputs
+            .iter()
+            .find(|x| x.layer.wl_surface() == surface)
+            .is_some()
+        {
             self.keyboard_focus = true;
         }
     }
@@ -432,7 +416,7 @@ impl KeyboardHandler for SketchOver {
         surface: &wl_surface::WlSurface,
         _: u32,
     ) {
-        if self.layer.wl_surface() == surface {
+        if self.output(surface).is_some() {
             self.keyboard_focus = false;
         }
     }
@@ -513,7 +497,7 @@ impl PointerHandler for SketchOver {
         use PointerEventKind::*;
         for event in events {
             // Ignore events for other surfaces
-            if &event.surface != self.layer.wl_surface() {
+            if self.output(&event.surface).is_none() {
                 continue;
             }
             match event.kind {
@@ -619,33 +603,45 @@ impl SketchOver {
         }
     }
 
-    pub fn draw(&mut self, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface) {
-        let width = self.width;
-        let height = self.height;
-        let stride = self.width as i32 * 4;
-
-        let (buffer, canvas) = self
-            .pool
-            .create_buffer(
-                width as i32,
-                height as i32,
-                stride,
-                wl_shm::Format::Argb8888,
-            )
-            .expect("create buffer");
-
-        let mut dt = raqote::DrawTarget::from_backing(
-            width as i32,
-            height as i32,
-            bytemuck::cast_slice_mut(canvas),
-        );
-        dt.clear(self.fgcolor);
-
-        if let Some(output) = self
-            .outputs
+    pub fn output(&self, surface: &wl_surface::WlSurface) -> Option<&OutPut> {
+        self.outputs
             .iter()
             .find(|x| x.layer.wl_surface() == surface)
+    }
+
+    // pub fn mut_output(&self, surface: &wl_surface::WlSurface) -> Option<&mut OutPut> {
+    //     self.outputs
+    //         .iter()
+    //         .find(|x| x.layer.wl_surface() == surface)
+    // }
+
+    pub fn draw(&mut self, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface) {
+        if let Some(output) = self
+            .outputs
+            .iter_mut()
+            .find(|x| x.layer.wl_surface() == surface)
         {
+            let width = output.width;
+            let height = output.height;
+            let stride = output.width as i32 * 4;
+
+            let (buffer, canvas) = output
+                .pool
+                .create_buffer(
+                    width as i32,
+                    height as i32,
+                    stride,
+                    wl_shm::Format::Argb8888,
+                )
+                .expect("create buffer");
+
+            let mut dt = raqote::DrawTarget::from_backing(
+                width as i32,
+                height as i32,
+                bytemuck::cast_slice_mut(canvas),
+            );
+            dt.clear(self.fgcolor);
+
             for draw in output.draws.iter() {
                 let mut pb = raqote::PathBuilder::new();
                 pb.move_to(draw.start.0 as f32, draw.start.1 as f32);
@@ -682,20 +678,22 @@ impl SketchOver {
             }
 
             // Damage the entire window
-            self.layer
+            output
+                .layer
                 .wl_surface()
                 .damage_buffer(0, 0, width as i32, height as i32);
 
             // Request our next frame
-            self.layer
+            output
+                .layer
                 .wl_surface()
-                .frame(qh, self.layer.wl_surface().clone());
+                .frame(qh, output.layer.wl_surface().clone());
 
             // Attach and commit to present.
             buffer
-                .attach_to(self.layer.wl_surface())
+                .attach_to(output.layer.wl_surface())
                 .expect("buffer attach");
-            self.layer.commit();
+            output.layer.commit();
         }
 
         // TODO save and reuse buffer when the window size is unchanged.  This is especially

@@ -119,7 +119,7 @@ fn main() {
         current_style: StrokeStyle::default(),
         kind: config.starting_tool,
         themed_pointer: None,
-        current_screen: 0,
+        current_output: None,
         outputs: Vec::new(),
     };
 
@@ -150,7 +150,7 @@ struct SketchOver {
     fgcolor: raqote::SolidSource,
     palette_index: usize,
     palette: Vec<raqote::SolidSource>,
-    current_screen: usize,
+    current_output: Option<usize>,
     kind: DrawKind,
     modifiers: Modifiers,
     current_style: StrokeStyle,
@@ -249,8 +249,10 @@ impl OutputHandler for SketchOver {
 
         let width = logical.0 as u32;
         let height = logical.1 as u32;
-        layer.set_anchor(Anchor::TOP);
+        // layer.set_anchor(Anchor::TOP);
+        layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        layer.set_exclusive_zone(-1);
         layer.set_size(width, height);
 
         layer.commit();
@@ -398,14 +400,6 @@ impl KeyboardHandler for SketchOver {
         _: &[u32],
         _keysyms: &[u32],
     ) {
-        if self
-            .outputs
-            .iter()
-            .find(|x| x.layer.wl_surface() == surface)
-            .is_some()
-        {
-            self.keyboard_focus = true;
-        }
     }
 
     fn leave(
@@ -416,9 +410,6 @@ impl KeyboardHandler for SketchOver {
         surface: &wl_surface::WlSurface,
         _: u32,
     ) {
-        if self.output(surface).is_some() {
-            self.keyboard_focus = false;
-        }
     }
 
     fn press_key(
@@ -433,12 +424,19 @@ impl KeyboardHandler for SketchOver {
             keysyms::KEY_Escape => {
                 self.exit = true;
             }
-            // keysyms::KEY_c => {
-            //     self.draws = Vec::new();
-            // }
-            // keysyms::KEY_u => {
-            //     self.draws.pop();
-            // }
+
+            keysyms::KEY_c => {
+                if let Some(idx) = self.current_output {
+                    let output = &mut self.outputs[idx];
+                    output.draws = Vec::new();
+                }
+            }
+            keysyms::KEY_u => {
+                if let Some(idx) = self.current_output {
+                    let output = &mut self.outputs[idx];
+                    output.draws.pop();
+                }
+            }
             keysyms::KEY_n => {
                 self.next_color();
             }
@@ -497,7 +495,8 @@ impl PointerHandler for SketchOver {
         use PointerEventKind::*;
         for event in events {
             // Ignore events for other surfaces
-            if self.output(&event.surface).is_none() {
+            let output = self.output(&event.surface);
+            if output.is_none() {
                 continue;
             }
             match event.kind {
@@ -506,6 +505,7 @@ impl PointerHandler for SketchOver {
                     // if let Some(themed_pointer) = self.themed_pointer.as_mut() {
                     //     themed_pointer.set_cursor(conn, cursor_icon);
                     // }
+                    self.current_output = Some(output.unwrap());
                 }
                 Leave { .. } => {}
                 Motion { .. } => {
@@ -603,10 +603,13 @@ impl SketchOver {
         }
     }
 
-    pub fn output(&self, surface: &wl_surface::WlSurface) -> Option<&OutPut> {
-        self.outputs
-            .iter()
-            .find(|x| x.layer.wl_surface() == surface)
+    pub fn output(&self, surface: &wl_surface::WlSurface) -> Option<usize> {
+        for (idx, output) in self.outputs.iter().enumerate() {
+            if output.layer.wl_surface() == surface {
+                return Some(idx);
+            }
+        }
+        None
     }
 
     // pub fn mut_output(&self, surface: &wl_surface::WlSurface) -> Option<&mut OutPut> {

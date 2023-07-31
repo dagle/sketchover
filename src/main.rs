@@ -1,10 +1,9 @@
 mod draw;
 
 use draw::{Draw, DrawKind};
-use font_kit::{font::Font, source::SystemSource};
-// use cursor_icon::CursorIcon;
+use font_kit::source::SystemSource;
 use hex_color::{HexColor, ParseHexColorError};
-use raqote::{DrawOptions, DrawTarget, Point, SolidSource, Source, StrokeStyle};
+use raqote::{SolidSource, StrokeStyle};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
@@ -181,12 +180,9 @@ fn main() {
     };
 
     loop {
-        match event_queue.blocking_dispatch(&mut sketch_over) {
-            Err(e) => {
-                eprintln!("Dispatch failed: {}", e);
-                break;
-            }
-            _ => {}
+        if let Err(e) = event_queue.blocking_dispatch(&mut sketch_over) {
+            eprintln!("Dispatch failed: {}", e);
+            break;
         }
 
         if sketch_over.exit {
@@ -264,9 +260,9 @@ impl OutputHandler for SketchOver {
         qh: &QueueHandle<Self>,
         output: wl_output::WlOutput,
     ) {
-        let surface = self.compositor_state.create_surface(&qh);
+        let surface = self.compositor_state.create_surface(qh);
         let layer = self.layer_shell.create_layer_surface(
-            &qh,
+            qh,
             surface,
             Layer::Top,
             Some("sketchover"),
@@ -433,7 +429,7 @@ impl KeyboardHandler for SketchOver {
         _: &Connection,
         _: &QueueHandle<Self>,
         _: &wl_keyboard::WlKeyboard,
-        surface: &wl_surface::WlSurface,
+        _: &wl_surface::WlSurface,
         _: u32,
         _: &[u32],
         _keysyms: &[u32],
@@ -445,7 +441,7 @@ impl KeyboardHandler for SketchOver {
         _: &Connection,
         _: &QueueHandle<Self>,
         _: &wl_keyboard::WlKeyboard,
-        surface: &wl_surface::WlSurface,
+        _: &wl_surface::WlSurface,
         _: u32,
     ) {
     }
@@ -543,9 +539,7 @@ impl PointerHandler for SketchOver {
     ) {
         use PointerEventKind::*;
         for event in events {
-            // Ignore events for other surfaces
-            let output = self.output(&event.surface);
-            let Some(output) = output else {
+            let Some(output) = self.output(&event.surface) else {
                 continue;
             };
             match event.kind {

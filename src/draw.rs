@@ -142,7 +142,7 @@ impl Draw {
         };
         draw_text(
             dt,
-            &font,
+            font,
             point_size,
             &format!(
                 "({:.2}, {:.2})",

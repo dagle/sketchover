@@ -18,3 +18,5 @@ wayland-client = "0.30.2"
 bytemuck = "1.13.0"
 hex_color = "2.0.0"
 cursor-icon = "1.0.0"
+font-kit = { version = "0.11.0", features = ["freetype", "loader-freetype"] }
+pathfinder_geometry = "0.5"

@@ -1,6 +1,10 @@
+mod draw;
+
+use draw::{Draw, DrawKind};
+use font_kit::{font::Font, source::SystemSource};
 // use cursor_icon::CursorIcon;
 use hex_color::{HexColor, ParseHexColorError};
-use raqote::{SolidSource, StrokeStyle};
+use raqote::{DrawOptions, DrawTarget, Point, SolidSource, Source, StrokeStyle};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
@@ -27,9 +31,18 @@ use wayland_client::{
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
     Connection, QueueHandle,
 };
+
+mod fk {
+    pub use font_kit::canvas::{Canvas, Format, RasterizationOptions};
+    pub use font_kit::font::Font;
+    pub use font_kit::hinting::HintingOptions;
+    pub use pathfinder_geometry::vector::{vec2f, vec2i};
+}
 use xkbcommon::xkb::keysyms;
 
 use clap::{Parser, ValueEnum};
+
+use crate::draw::DrawAction;
 
 // const CURSORS: &[CursorIcon] = &[CursorIcon::Default, CursorIcon::Crosshair];
 
@@ -49,12 +62,37 @@ struct Config {
     palette: Vec<String>,
 
     #[clap(short, long)]
+    #[clap(default_value_t = false)]
+    distance: bool,
+
+    #[clap(long)]
+    #[clap(default_value_t = Unit::Pixel, value_enum)]
+    unit: Unit,
+
+    #[clap(short, long)]
     #[clap(default_value_t = String::from("#00000000"))]
     foreground: String,
+
+    #[clap(long)]
+    #[clap(default_value_t = String::from("#FFFFFFFF"))]
+    text_color: String,
 
     #[clap(short = 't', long)]
     #[clap(default_value_t = DrawKind::Pen, value_enum)]
     starting_tool: DrawKind,
+
+    #[clap(long)]
+    font: Option<String>,
+
+    #[clap(long)]
+    #[clap(default_value_t = 12.)]
+    font_size: f32,
+}
+
+#[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
+enum Unit {
+    Pixel,
+    Cm,
 }
 
 fn parse_solid(str: &str) -> Result<SolidSource, ParseHexColorError> {
@@ -71,9 +109,10 @@ fn main() {
     env_logger::init();
     let config = Config::parse();
 
-    let conn = Connection::connect_to_env().unwrap();
+    let conn = Connection::connect_to_env().expect("Couldn't connect wayland compositor");
 
-    let (globals, mut event_queue) = registry_queue_init(&conn).unwrap();
+    let (globals, mut event_queue) =
+        registry_queue_init(&conn).expect("Couldn't create an event queue");
     let qh = event_queue.handle();
 
     let registry_state = RegistryState::new(&globals);
@@ -85,7 +124,7 @@ fn main() {
     // We don't need this one atm bu we will the future to set the set the cursor icon
     let compositor_state =
         CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
-    let layer_shell = LayerShell::bind(&globals, &qh).expect("layer shell is not available");
+    let layer_shell = LayerShell::bind(&globals, &qh).expect("Layer shell is not available");
 
     let shm = Shm::bind(&globals, &qh).expect("wl_shm is not available");
 
@@ -99,6 +138,21 @@ fn main() {
         palette.push(color);
     }
 
+    let font = match config.font {
+        Some(name) => SystemSource::new().select_by_postscript_name(&name),
+        None => SystemSource::new().select_best_match(
+            &[font_kit::family_name::FamilyName::Serif],
+            &font_kit::properties::Properties::new(),
+        ),
+    }
+    .expect("No suitable font found")
+    .load()
+    .expect("Couldn't load font");
+
+    let font_color = parse_solid(&config.text_color).expect("Couldn't parse font color");
+
+    let font_size = config.font_size;
+
     let mut sketch_over = SketchOver {
         registry_state,
         seat_state,
@@ -109,8 +163,8 @@ fn main() {
 
         exit: false,
         drawing: false,
+        distance: config.distance,
         keyboard: None,
-        keyboard_focus: false,
         pointer: None,
         fgcolor,
         modifiers: Modifiers::default(),
@@ -121,10 +175,19 @@ fn main() {
         themed_pointer: None,
         current_output: None,
         outputs: Vec::new(),
+        font,
+        font_color,
+        font_size,
     };
 
     loop {
-        event_queue.blocking_dispatch(&mut sketch_over).unwrap();
+        match event_queue.blocking_dispatch(&mut sketch_over) {
+            Err(e) => {
+                eprintln!("Dispatch failed: {}", e);
+                break;
+            }
+            _ => {}
+        }
 
         if sketch_over.exit {
             break;
@@ -142,10 +205,9 @@ struct SketchOver {
 
     exit: bool,
     drawing: bool,
-    // first_configure: bool,
+    distance: bool,
     layer_shell: LayerShell,
     keyboard: Option<wl_keyboard::WlKeyboard>,
-    keyboard_focus: bool,
     pointer: Option<wl_pointer::WlPointer>,
     fgcolor: raqote::SolidSource,
     palette_index: usize,
@@ -155,6 +217,9 @@ struct SketchOver {
     modifiers: Modifiers,
     current_style: StrokeStyle,
     themed_pointer: Option<ThemedPointer>,
+    font: font_kit::loaders::freetype::Font,
+    font_color: raqote::SolidSource,
+    font_size: f32,
 }
 
 struct OutPut {
@@ -165,41 +230,6 @@ struct OutPut {
     layer: LayerSurface,
     configured: bool,
     draws: Vec<Draw>,
-}
-
-struct Draw {
-    start: (f64, f64),
-    style: StrokeStyle,
-    color: raqote::SolidSource,
-    action: DrawAction,
-}
-
-impl Draw {
-    fn add_motion(&mut self, motion: (f64, f64)) {
-        match self.action {
-            DrawAction::Pen(ref mut pen) => pen.push(motion),
-            DrawAction::Line(_, _) => self.action = DrawAction::Line(motion.0, motion.1),
-            DrawAction::Rect(_, _) => {
-                self.action = DrawAction::Rect(motion.0 - self.start.0, motion.1 - self.start.1)
-            }
-            DrawAction::Circle(_, _) => self.action = DrawAction::Circle(motion.0, motion.1),
-        }
-    }
-}
-
-#[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
-enum DrawKind {
-    Pen,
-    Line,
-    Rect,
-    Circle,
-}
-
-enum DrawAction {
-    Pen(Vec<(f64, f64)>),
-    Line(f64, f64),
-    Rect(f64, f64),
-    Circle(f64, f64),
 }
 
 impl CompositorHandler for SketchOver {
@@ -243,13 +273,21 @@ impl OutputHandler for SketchOver {
             Some(&output),
         );
 
-        // TODO: handle errors better
-        let info = self.output_state.info(&output).unwrap();
-        let logical = info.logical_size.unwrap();
+        let Some(info) = self.output_state.info(&output) else {
+            eprintln!("Can't get screen info");
+            self.exit = true;
+            return;
+        };
+
+        let Some(logical) = info.logical_size else {
+            eprintln!("Can't get logical info about the screen");
+            self.exit = true;
+            return;
+        };
 
         let width = logical.0 as u32;
         let height = logical.1 as u32;
-        // layer.set_anchor(Anchor::TOP);
+
         layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         layer.set_exclusive_zone(-1);
@@ -449,6 +487,9 @@ impl KeyboardHandler for SketchOver {
             keysyms::KEY_T => {
                 self.prev_tool();
             }
+            keysyms::KEY_d => {
+                self.distance = !self.distance;
+            }
             keysyms::KEY_plus => {
                 self.increase_size();
             }
@@ -480,7 +521,15 @@ impl KeyboardHandler for SketchOver {
         _serial: u32,
         modifiers: Modifiers,
     ) {
-        self.modifiers = modifiers
+        self.modifiers = modifiers;
+        if let Some(idx) = self.current_output {
+            let output = &mut self.outputs[idx];
+            if self.drawing {
+                if let Some(last) = output.draws.last_mut() {
+                    last.add_motion(None, &self.modifiers);
+                }
+            }
+        }
     }
 }
 
@@ -496,16 +545,16 @@ impl PointerHandler for SketchOver {
         for event in events {
             // Ignore events for other surfaces
             let output = self.output(&event.surface);
-            if output.is_none() {
+            let Some(output) = output else {
                 continue;
-            }
+            };
             match event.kind {
                 Enter { .. } => {
                     // TODO: add this when 0.18 is out, I don't want to support the old API
                     // if let Some(themed_pointer) = self.themed_pointer.as_mut() {
                     //     themed_pointer.set_cursor(conn, cursor_icon);
                     // }
-                    self.current_output = Some(output.unwrap());
+                    self.current_output = Some(output);
                 }
                 Leave { .. } => {}
                 Motion { .. } => {
@@ -516,7 +565,7 @@ impl PointerHandler for SketchOver {
                     {
                         if self.drawing {
                             if let Some(last) = output.draws.last_mut() {
-                                last.add_motion(event.position);
+                                last.add_motion(Some(event.position), &self.modifiers);
                             }
                         }
                     }
@@ -539,6 +588,7 @@ impl PointerHandler for SketchOver {
                             start: event.position,
                             style: self.current_style.clone(),
                             color: self.palette[self.palette_index],
+                            distance: self.distance,
                             action,
                         };
                         output.draws.push(draw);
@@ -612,12 +662,6 @@ impl SketchOver {
         None
     }
 
-    // pub fn mut_output(&self, surface: &wl_surface::WlSurface) -> Option<&mut OutPut> {
-    //     self.outputs
-    //         .iter()
-    //         .find(|x| x.layer.wl_surface() == surface)
-    // }
-
     pub fn draw(&mut self, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface) {
         if let Some(output) = self
             .outputs
@@ -646,38 +690,17 @@ impl SketchOver {
             dt.clear(self.fgcolor);
 
             for draw in output.draws.iter() {
-                let mut pb = raqote::PathBuilder::new();
-                pb.move_to(draw.start.0 as f32, draw.start.1 as f32);
-                match draw.action {
-                    DrawAction::Pen(ref pen) => {
-                        for stroke in pen {
-                            pb.line_to(stroke.0 as f32, stroke.1 as f32);
-                            pb.move_to(stroke.0 as f32, stroke.1 as f32);
-                        }
-                        pb.close();
-                    }
-                    DrawAction::Line(x, y) => {
-                        pb.line_to(x as f32, y as f32);
-                    }
-                    DrawAction::Rect(w, h) => {
-                        pb.rect(draw.start.0 as f32, draw.start.1 as f32, w as f32, h as f32);
-                    }
-                    DrawAction::Circle(_, _) => {
-                        pb.arc(
-                            draw.start.0 as f32,
-                            draw.start.1 as f32,
-                            20.,
-                            0. * std::f32::consts::PI,
-                            4. * std::f32::consts::PI,
-                        );
-                    }
+                draw.draw(&mut dt);
+
+                if draw.distance {
+                    draw.draw_size(
+                        &mut dt,
+                        &self.font,
+                        self.font_size,
+                        &self.font_color.into(),
+                        &raqote::DrawOptions::default(),
+                    );
                 }
-                dt.stroke(
-                    &pb.finish(),
-                    &raqote::Source::Solid(draw.color),
-                    &draw.style,
-                    &raqote::DrawOptions::new(),
-                );
             }
 
             // Damage the entire window
@@ -695,7 +718,7 @@ impl SketchOver {
             // Attach and commit to present.
             buffer
                 .attach_to(output.layer.wl_surface())
-                .expect("buffer attach");
+                .expect("Can't attach the buffer");
             output.layer.commit();
         }
 

@@ -876,15 +876,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "238abfbb77c1915110ad968465608b68e869e0772622c9656714e73e5a1a522f"
 
 [[package]]
-name = "sketchover-rs"
+name = "sketchover"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
  "clap",
  "cursor-icon",
  "env_logger",
+ "font-kit",
  "hex_color",
  "log",
+ "pathfinder_geometry",
  "raqote",
  "smithay-client-toolkit",
  "wayland-client",

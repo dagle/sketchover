@@ -49,8 +49,8 @@ use crate::draw::DrawAction;
 #[command(author, version, about, long_about = None)]
 struct Config {
     #[clap(short, long)]
-    #[clap(default_value_t = 5)]
-    size: u32,
+    #[clap(default_value_t = 1.)]
+    size: f32,
 
     #[clap(short, long)]
     #[clap(default_value_t = String::from("#FF0000FF"))]
@@ -152,6 +152,9 @@ fn main() {
 
     let font_size = config.font_size;
 
+    let mut current_style = StrokeStyle::default();
+    current_style.width = config.size;
+
     let mut sketch_over = SketchOver {
         registry_state,
         seat_state,
@@ -169,7 +172,7 @@ fn main() {
         modifiers: Modifiers::default(),
         palette,
         palette_index: 0,
-        current_style: StrokeStyle::default(),
+        current_style,
         kind: config.starting_tool,
         themed_pointer: None,
         current_output: None,

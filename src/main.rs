@@ -152,8 +152,10 @@ fn main() {
 
     let font_size = config.font_size;
 
-    let mut current_style = StrokeStyle::default();
-    current_style.width = config.size;
+    let current_style = raqote::StrokeStyle {
+        width: config.size,
+        ..StrokeStyle::default()
+    };
 
     let mut sketch_over = SketchOver {
         registry_state,

@@ -73,9 +73,10 @@ impl Draw {
                     self.action = DrawAction::Rect(motion.0 - self.start.0, motion.1 - self.start.1)
                 }
             }
-            DrawAction::Circle(x, y) => {
-                let motion = motion.unwrap_or((x, y));
-                self.action = DrawAction::Circle(motion.0, motion.1);
+            DrawAction::Circle(_, _) => {
+                if let Some((x, y)) = motion {
+                    self.action = DrawAction::Circle(x, y);
+                }
             }
         }
     }
@@ -96,13 +97,16 @@ impl Draw {
             DrawAction::Rect(w, h) => {
                 pb.rect(self.start.0 as f32, self.start.1 as f32, w as f32, h as f32);
             }
-            DrawAction::Circle(_, _) => {
+            DrawAction::Circle(x, y) => {
+                let r = f64::sqrt(f64::powi(self.start.0 - x, 2) + f64::powi(self.start.1 - y, 2));
+                let start_x = (self.start.0 + x) / 2.0;
+                let start_y = (self.start.1 + y) / 2.0;
                 pb.arc(
-                    self.start.0 as f32,
-                    self.start.1 as f32,
-                    20.,
-                    0. * std::f32::consts::PI,
-                    4. * std::f32::consts::PI,
+                    start_x as f32,
+                    start_y as f32,
+                    (r / 2.0) as f32,
+                    0.,
+                    2. * std::f32::consts::PI,
                 );
             }
         }

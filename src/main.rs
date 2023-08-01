@@ -581,7 +581,9 @@ impl PointerHandler for SketchOver {
                             DrawKind::Pen => DrawAction::Pen(Vec::new()),
                             DrawKind::Line => DrawAction::Line(event.position.0, event.position.1),
                             DrawKind::Rect => DrawAction::Rect(5.0, 5.0),
-                            DrawKind::Circle => DrawAction::Circle(5.0, 5.0),
+                            DrawKind::Circle => {
+                                DrawAction::Circle(event.position.0 + 10.0, event.position.1 + 10.0)
+                            }
                         };
                         let draw = Draw {
                             start: event.position,

@@ -56,10 +56,11 @@ impl Draw {
                 }
             }
             DrawAction::Rect(x, y) => {
-                let motion = motion.unwrap_or((x, y));
+                let (x_dist, y_dist) = match motion {
+                    Some(motion) => (motion.0 - self.start.0, motion.1 - self.start.1),
+                    None => (x, y),
+                };
                 if modifier.shift {
-                    let x_dist = motion.0 - self.start.0;
-                    let y_dist = motion.1 - self.start.1;
                     let x_length = f64::abs(x_dist);
                     let y_length = f64::abs(y_dist);
                     let x_sign = f64::signum(x_dist);
@@ -70,7 +71,7 @@ impl Draw {
                         self.action = DrawAction::Rect(y_length * x_sign, y_dist);
                     }
                 } else {
-                    self.action = DrawAction::Rect(motion.0 - self.start.0, motion.1 - self.start.1)
+                    self.action = DrawAction::Rect(x_dist, y_dist);
                 }
             }
             DrawAction::Circle(_, _) => {

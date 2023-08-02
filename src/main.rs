@@ -1,9 +1,7 @@
-mod draw;
-
-use draw::{Draw, DrawKind};
 use font_kit::source::SystemSource;
 use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
+use sketchover::draw::{Draw, DrawAction, DrawKind};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
@@ -31,17 +29,9 @@ use wayland_client::{
     Connection, QueueHandle,
 };
 
-mod fk {
-    pub use font_kit::canvas::{Canvas, Format, RasterizationOptions};
-    pub use font_kit::font::Font;
-    pub use font_kit::hinting::HintingOptions;
-    pub use pathfinder_geometry::vector::{vec2f, vec2i};
-}
 use xkbcommon::xkb::keysyms;
 
 use clap::{Parser, ValueEnum};
-
-use crate::draw::DrawAction;
 
 // const CURSORS: &[CursorIcon] = &[CursorIcon::Default, CursorIcon::Crosshair];
 

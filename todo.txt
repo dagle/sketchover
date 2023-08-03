@@ -1,0 +1,6 @@
+- Optimize the rendering
+- An optional ui
+  - A palett
+  - A toolbox
+  - A size tool
+- make it possible to escape/run a program

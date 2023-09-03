@@ -1,0 +1,44 @@
+.TH sketchover 1
+.SH NAME
+sketchover \- doodle program for wayland
+.SH SYNOPSIS
+.B sketchover
+[OPTIONS]
+.SH DESCRIPTION
+.B sketchover
+is a small doodle program to draw directly on your screens
+foreground. Sketchover uses wayland and requires a wayland compositor to be run to work. It
+uses wlr-layer-shell to draw on the foreground, so your compositor needs to
+support it.
+.SH OPTIONS
+.TP
+.BR \-s ", " \-\-size \ \fISIZE\fR
+Set the default paintbrush size. Example 1.
+.TP
+.BR \-c ", " \-\-color \ \fICOLOR\fR
+Set the default color. Example "#FF0000FF"
+.TP
+.BR \-p ", " \-\-palette \ \fICOLORS\fR
+Set the alternative colors. Example "#00FF00FF #0000FFFF"
+.TP
+.BR \-d ", " \-\-distance \ \fIBOOL\fR
+Show size for ruler and shapes.
+.TP
+.BR \-f ", " \-\-foreground \ \fICOLOR\fR
+Sets foreground. Example "#00000000"
+.TP
+.BR \-t ", " \-\-starting-tool \ \fITOOL\fR
+Set the starting tool. Example Pen, Line, Rect, Circle.
+.TP
+.BR \-\-text-color \ \fICOLOR\fR
+Sets text color "#FFFFFFFF"
+.TP
+.BR \-\-font \ \fIFONT\fR
+Set the text font
+.TP
+.BR \-\-font-size \ \fIFONT_SIZE\fR
+Set the text font size
+.SH FILES
+sketchover uses XDG_CONFIG_HOME for it's config files. Normally this is:
+
+$HOME/.config/sketchover/default-config.toml

@@ -4,3 +4,9 @@
   - A toolbox
   - A size tool
 - make it possible to escape/run a program
+
+- Add support for mousepointers [when next way of smithway 0.18 is released]
+
+- Being able to create screenshots [when sithway add support for the screencopy protocol]
+-- Not mainly as a screenshot tool (but it makes it easier rather competing with another program) and all the code will be there anyways.
+-- Use a screenshot to "freeze" the frame, then render the screenshot as a "background"

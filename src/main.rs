@@ -1,12 +1,19 @@
+use std::collections::HashMap;
+
 use font_kit::source::SystemSource;
 use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
+use sketchover::config::{Args, Command, Config};
 use sketchover::draw::{Draw, DrawAction, DrawKind};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
     delegate_registry, delegate_seat, delegate_shm,
     output::{OutputHandler, OutputInfo, OutputState},
+    reexports::protocols_wlr::screencopy::v1::client::{
+        zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1,
+        zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
+    },
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
@@ -24,9 +31,10 @@ use smithay_client_toolkit::{
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
 use wayland_client::{
+    delegate_noop,
     globals::registry_queue_init,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
-    Connection, QueueHandle,
+    Connection, Dispatch, QueueHandle,
 };
 
 use xkbcommon::xkb::keysyms;
@@ -35,48 +43,48 @@ use clap::{Parser, ValueEnum};
 
 // const CURSORS: &[CursorIcon] = &[CursorIcon::Default, CursorIcon::Crosshair];
 
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Config {
-    #[clap(short, long)]
-    #[clap(default_value_t = 1.)]
-    size: f32,
-
-    #[clap(short, long)]
-    #[clap(default_value_t = String::from("#FF0000FF"))]
-    color: String,
-
-    #[clap(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
-    #[arg(default_values_t = ["#00FF00FF #0000FFFF".to_string()])]
-    palette: Vec<String>,
-
-    #[clap(short, long)]
-    #[clap(default_value_t = false)]
-    distance: bool,
-
-    #[clap(long)]
-    #[clap(default_value_t = Unit::Pixel, value_enum)]
-    unit: Unit,
-
-    #[clap(short, long)]
-    #[clap(default_value_t = String::from("#00000000"))]
-    foreground: String,
-
-    #[clap(long)]
-    #[clap(default_value_t = String::from("#FFFFFFFF"))]
-    text_color: String,
-
-    #[clap(short = 't', long)]
-    #[clap(default_value_t = DrawKind::Pen, value_enum)]
-    starting_tool: DrawKind,
-
-    #[clap(long)]
-    font: Option<String>,
-
-    #[clap(long)]
-    #[clap(default_value_t = 12.)]
-    font_size: f32,
-}
+// #[derive(Parser)]
+// #[command(author, version, about, long_about = None)]
+// struct Config {
+//     #[clap(short, long)]
+//     #[clap(default_value_t = 1.)]
+//     size: f32,
+//
+//     #[clap(short, long)]
+//     #[clap(default_value_t = String::from("#FF0000FF"))]
+//     color: String,
+//
+//     #[clap(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
+//     #[arg(default_values_t = ["#00FF00FF #0000FFFF".to_string()])]
+//     palette: Vec<String>,
+//
+//     #[clap(short, long)]
+//     #[clap(default_value_t = false)]
+//     distance: bool,
+//
+//     #[clap(long)]
+//     #[clap(default_value_t = Unit::Pixel, value_enum)]
+//     unit: Unit,
+//
+//     #[clap(short, long)]
+//     #[clap(default_value_t = String::from("#00000000"))]
+//     foreground: String,
+//
+//     #[clap(long)]
+//     #[clap(default_value_t = String::from("#FFFFFFFF"))]
+//     text_color: String,
+//
+//     #[clap(short = 't', long)]
+//     #[clap(default_value_t = DrawKind::Pen, value_enum)]
+//     starting_tool: DrawKind,
+//
+//     #[clap(long)]
+//     font: Option<String>,
+//
+//     #[clap(long)]
+//     #[clap(default_value_t = 12.)]
+//     font_size: f32,
+// }
 
 #[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
 enum Unit {
@@ -96,7 +104,9 @@ fn parse_solid(str: &str) -> Result<SolidSource, ParseHexColorError> {
 
 fn main() {
     env_logger::init();
-    let config = Config::parse();
+    let args = Args::parse();
+
+    let config = Config::load(args).expect("Could not parse config file");
 
     let conn = Connection::connect_to_env().expect("Couldn't connect wayland compositor");
 
@@ -114,6 +124,18 @@ fn main() {
     let compositor_state =
         CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
     let layer_shell = LayerShell::bind(&globals, &qh).expect("Layer shell is not available");
+
+    let screencopy_manager = globals
+        .bind::<ZwlrScreencopyManagerV1, _, _>(&qh, 3..=3, ())
+        .expect("apa");
+    // Ok(x) => x,
+    // Err(e) => {
+    //     log::error!("Failed to create screencopy manager. Does your compositor implement ZwlrScreencopy?");
+    //     log::error!("err: {e}")
+    //     // return Err(Error::ProtocolNotFound(
+    //     //     "ZwlrScreencopy Manager not found".to_string(),
+    //     // ));
+    // }
 
     let shm = Shm::bind(&globals, &qh).expect("wl_shm is not available");
 
@@ -172,6 +194,7 @@ fn main() {
         font,
         font_color,
         font_size,
+        key_map: config.key_map,
     };
 
     loop {
@@ -211,6 +234,7 @@ struct SketchOver {
     font: font_kit::loaders::freetype::Font,
     font_color: raqote::SolidSource,
     font_size: f32,
+    key_map: HashMap<String, Command>,
 }
 
 struct OutPut {
@@ -221,6 +245,19 @@ struct OutPut {
     layer: LayerSurface,
     configured: bool,
     draws: Vec<Draw>,
+}
+
+impl Dispatch<ZwlrScreencopyFrameV1, ()> for SketchOver {
+    fn event(
+        state: &mut Self,
+        proxy: &ZwlrScreencopyFrameV1,
+        event: <ZwlrScreencopyFrameV1 as wayland_client::Proxy>::Event,
+        data: &(),
+        conn: &Connection,
+        qhandle: &QueueHandle<Self>,
+    ) {
+        todo!()
+    }
 }
 
 impl CompositorHandler for SketchOver {
@@ -449,49 +486,76 @@ impl KeyboardHandler for SketchOver {
         _: u32,
         event: KeyEvent,
     ) {
-        match event.keysym {
-            keysyms::KEY_Escape => {
-                self.exit = true;
-            }
-
-            keysyms::KEY_c => {
-                if let Some(idx) = self.current_output {
-                    let output = &mut self.outputs[idx];
-                    output.draws = Vec::new();
-                }
-            }
-            keysyms::KEY_u => {
-                if let Some(idx) = self.current_output {
-                    let output = &mut self.outputs[idx];
-                    output.draws.pop();
-                }
-            }
-            keysyms::KEY_n => {
-                self.next_color();
-            }
-            keysyms::KEY_N => {
-                self.prev_color();
-            }
-            keysyms::KEY_t => {
-                self.next_tool();
-            }
-            keysyms::KEY_T => {
-                self.prev_tool();
-            }
-            keysyms::KEY_d => {
-                self.distance = !self.distance;
-            }
-            keysyms::KEY_plus => {
-                self.increase_size();
-            }
-            keysyms::KEY_minus => {
-                self.decrease_size();
-            }
-            _ => {}
-        }
+        // Esc is hardcoded
         if event.keysym == keysyms::KEY_Escape {
             self.exit = true;
+            return;
         }
+        let str = xkbcommon::xkb::keysym_get_name(event.keysym);
+        match self.key_map.get(&str) {
+            Some(command) => match command {
+                Command::Clear => {
+                    if let Some(idx) = self.current_output {
+                        let output = &mut self.outputs[idx];
+                        output.draws = Vec::new();
+                    }
+                }
+                Command::Undo => {
+                    if let Some(idx) = self.current_output {
+                        let output = &mut self.outputs[idx];
+                        output.draws.pop();
+                    }
+                }
+                Command::NextColor => self.next_color(),
+                Command::PrevColor => self.prev_color(),
+                Command::NextTool => self.next_tool(),
+                Command::PrevTool => self.prev_tool(),
+                Command::ToggleDistance => self.distance = !self.distance,
+                Command::IncreaseSize => self.increase_size(),
+                Command::DecreaseSize => self.decrease_size(),
+            },
+            None => println!("Key not found"),
+        }
+        // match event.keysym {
+        //     keysyms::KEY_Escape => {
+        //         self.exit = true;
+        //     }
+        //
+        //     keysyms::KEY_c => {
+        //         if let Some(idx) = self.current_output {
+        //             let output = &mut self.outputs[idx];
+        //             output.draws = Vec::new();
+        //         }
+        //     }
+        //     keysyms::KEY_u => {
+        //         if let Some(idx) = self.current_output {
+        //             let output = &mut self.outputs[idx];
+        //             output.draws.pop();
+        //         }
+        //     }
+        //     keysyms::KEY_n => {
+        //         self.next_color();
+        //     }
+        //     keysyms::KEY_N => {
+        //         self.prev_color();
+        //     }
+        //     keysyms::KEY_t => {
+        //         self.next_tool();
+        //     }
+        //     keysyms::KEY_T => {
+        //         self.prev_tool();
+        //     }
+        //     keysyms::KEY_d => {
+        //         self.distance = !self.distance;
+        //     }
+        //     keysyms::KEY_plus => {
+        //         self.increase_size();
+        //     }
+        //     keysyms::KEY_minus => {
+        //         self.decrease_size();
+        //     }
+        //     _ => {}
+        // }
     }
 
     fn release_key(
@@ -730,6 +794,8 @@ delegate_keyboard!(SketchOver);
 delegate_pointer!(SketchOver);
 
 delegate_layer!(SketchOver);
+
+delegate_noop!(SketchOver: ignore ZwlrScreencopyManagerV1);
 
 impl ProvidesRegistryState for SketchOver {
     fn registry(&mut self) -> &mut RegistryState {

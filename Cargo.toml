@@ -20,3 +20,5 @@ hex_color = "2.0.0"
 cursor-icon = "1.0.0"
 font-kit = { version = "0.11.0", features = ["freetype", "loader-freetype"] }
 pathfinder_geometry = "0.5"
+serde = { version = "1.0.188", features = ["derive"] }
+confy = { version = "0.5.1", features = ["ron"] }

@@ -1,6 +1,7 @@
 use clap::ValueEnum;
 use font_kit::font::Font;
 use raqote::{DrawOptions, DrawTarget, Point, Source, StrokeStyle};
+use serde::{Deserialize, Serialize};
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 mod fk {
@@ -18,7 +19,7 @@ pub struct Draw {
     pub action: DrawAction,
 }
 
-#[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DrawKind {
     Pen,
     Line,

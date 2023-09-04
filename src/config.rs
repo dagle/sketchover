@@ -63,6 +63,7 @@ pub enum Command {
     ToggleDistance,
     IncreaseSize,
     DecreaseSize,
+    TogglePause,
 }
 
 impl Default for Config {
@@ -77,6 +78,7 @@ impl Default for Config {
         key_map.insert("d".to_owned(), Command::ToggleDistance);
         key_map.insert("+".to_owned(), Command::IncreaseSize);
         key_map.insert("-".to_owned(), Command::DecreaseSize);
+        key_map.insert("p".to_owned(), Command::TogglePause);
         Config {
             size: 1.,
             color: String::from("#FF0000FF"),

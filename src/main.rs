@@ -30,6 +30,7 @@ use smithay_client_toolkit::{
     },
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
+use wayland_client::globals::GlobalList;
 use wayland_client::{
     delegate_noop,
     globals::registry_queue_init,
@@ -42,49 +43,6 @@ use xkbcommon::xkb::keysyms;
 use clap::{Parser, ValueEnum};
 
 // const CURSORS: &[CursorIcon] = &[CursorIcon::Default, CursorIcon::Crosshair];
-
-// #[derive(Parser)]
-// #[command(author, version, about, long_about = None)]
-// struct Config {
-//     #[clap(short, long)]
-//     #[clap(default_value_t = 1.)]
-//     size: f32,
-//
-//     #[clap(short, long)]
-//     #[clap(default_value_t = String::from("#FF0000FF"))]
-//     color: String,
-//
-//     #[clap(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
-//     #[arg(default_values_t = ["#00FF00FF #0000FFFF".to_string()])]
-//     palette: Vec<String>,
-//
-//     #[clap(short, long)]
-//     #[clap(default_value_t = false)]
-//     distance: bool,
-//
-//     #[clap(long)]
-//     #[clap(default_value_t = Unit::Pixel, value_enum)]
-//     unit: Unit,
-//
-//     #[clap(short, long)]
-//     #[clap(default_value_t = String::from("#00000000"))]
-//     foreground: String,
-//
-//     #[clap(long)]
-//     #[clap(default_value_t = String::from("#FFFFFFFF"))]
-//     text_color: String,
-//
-//     #[clap(short = 't', long)]
-//     #[clap(default_value_t = DrawKind::Pen, value_enum)]
-//     starting_tool: DrawKind,
-//
-//     #[clap(long)]
-//     font: Option<String>,
-//
-//     #[clap(long)]
-//     #[clap(default_value_t = 12.)]
-//     font_size: f32,
-// }
 
 #[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq)]
 enum Unit {
@@ -127,7 +85,7 @@ fn main() {
 
     let screencopy_manager = globals
         .bind::<ZwlrScreencopyManagerV1, _, _>(&qh, 3..=3, ())
-        .expect("apa");
+        .expect("Couldn't create a screenshot manager");
     // Ok(x) => x,
     // Err(e) => {
     //     log::error!("Failed to create screencopy manager. Does your compositor implement ZwlrScreencopy?");
@@ -175,6 +133,7 @@ fn main() {
         output_state,
         compositor_state,
         layer_shell,
+        globals,
         shm,
 
         exit: false,
@@ -214,6 +173,7 @@ struct SketchOver {
     seat_state: SeatState,
     output_state: OutputState,
     compositor_state: CompositorState,
+    globals: GlobalList,
     shm: Shm,
     outputs: Vec<OutPut>,
 
@@ -247,18 +207,20 @@ struct OutPut {
     draws: Vec<Draw>,
 }
 
-impl Dispatch<ZwlrScreencopyFrameV1, ()> for SketchOver {
-    fn event(
-        state: &mut Self,
-        proxy: &ZwlrScreencopyFrameV1,
-        event: <ZwlrScreencopyFrameV1 as wayland_client::Proxy>::Event,
-        data: &(),
-        conn: &Connection,
-        qhandle: &QueueHandle<Self>,
-    ) {
-        todo!()
-    }
-}
+// struct CaptureFrameState {}
+//
+// impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureFrameState {
+//     fn event(
+//         state: &mut Self,
+//         proxy: &ZwlrScreencopyFrameV1,
+//         event: <ZwlrScreencopyFrameV1 as wayland_client::Proxy>::Event,
+//         data: &(),
+//         conn: &Connection,
+//         qhandle: &QueueHandle<Self>,
+//     ) {
+//         todo!()
+//     }
+// }
 
 impl CompositorHandler for SketchOver {
     fn scale_factor_changed(
@@ -513,6 +475,7 @@ impl KeyboardHandler for SketchOver {
                 Command::ToggleDistance => self.distance = !self.distance,
                 Command::IncreaseSize => self.increase_size(),
                 Command::DecreaseSize => self.decrease_size(),
+                Command::TogglePause => {}
             },
             None => println!("Key not found"),
         }

@@ -5,6 +5,8 @@ use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
 use sketchover::config::{Args, Command, Config};
 use sketchover::draw::{Draw, DrawAction, DrawKind};
+use sketchover::pause::{FrameFormat, create_screnshot};
+use smithay_client_toolkit::shm::slot::Buffer;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
@@ -197,7 +199,7 @@ struct SketchOver {
     key_map: HashMap<String, Command>,
 }
 
-struct OutPut {
+pub struct OutPut {
     width: u32,
     height: u32,
     info: OutputInfo,
@@ -205,6 +207,21 @@ struct OutPut {
     layer: LayerSurface,
     configured: bool,
     draws: Vec<Draw>,
+    format: Option<FrameFormat>,
+    image: Option<Buffer>,
+}
+
+impl OutPut {
+    fn toggle_output(&mut self) {
+        self.format = match self.format {
+            Some(_) => {
+                None
+            }
+            None => {
+                let (image, format) = create_screnshot(conn, globals, pool, output)
+            }
+        }
+    }
 }
 
 // struct CaptureFrameState {}
@@ -296,6 +313,8 @@ impl OutputHandler for SketchOver {
             layer,
             configured: false,
             draws: Vec::new(),
+            image: None,
+            format: None,
         };
         self.outputs.push(output);
     }
@@ -475,7 +494,12 @@ impl KeyboardHandler for SketchOver {
                 Command::ToggleDistance => self.distance = !self.distance,
                 Command::IncreaseSize => self.increase_size(),
                 Command::DecreaseSize => self.decrease_size(),
-                Command::TogglePause => {}
+                Command::TogglePause => { 
+                    if let Some(idx) = self.current_output {
+                        let current = self.outputs.get_mut(idx).unwrap();
+                        current.toggle_output();
+                    }
+                }
             },
             None => println!("Key not found"),
         }

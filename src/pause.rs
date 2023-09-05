@@ -6,7 +6,7 @@ use smithay_client_toolkit::{
         zwlr_screencopy_frame_v1::{ZwlrScreencopyFrameV1, self},
         zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
     },
-    shm::{Shm, slot::{SlotPool, self}},
+    shm::{Shm, slot::{SlotPool, self, Buffer, Slot}, raw::RawPool},
 };
 use wayland_client::{globals::GlobalList, Connection, protocol::{wl_shm::{WlShm, Format}, wl_output}, Dispatch, QueueHandle, delegate_noop, WEnum, DispatchError};
 
@@ -64,8 +64,15 @@ impl From<DispatchError> for FrameError {
     }
 }
 
-pub fn create_screnshot(conn: &Connection, globals: &GlobalList, pool: &mut SlotPool, output: &wl_output::WlOutput)
-    -> Result<(slot::Buffer, FrameFormat), FrameError> {
+pub struct ScreenCopy {
+    pub format: FrameFormat,
+    pub image: Buffer,
+    pub slot: SlotPool,
+}
+
+
+pub fn create_screenshot(conn: &Connection, globals: &GlobalList, shm: &Shm, output: &wl_output::WlOutput)
+    -> Result<ScreenCopy, FrameError> {
     let mut state = CaptureFrameState {
         format: None,
         state: None,
@@ -92,6 +99,10 @@ pub fn create_screnshot(conn: &Connection, globals: &GlobalList, pool: &mut Slot
         None => return Err(FrameError::NoFormat)
     };
 
+
+    // TODO: Error!
+    let mut pool = SlotPool::new(format.height as usize * format.stride as usize, shm).unwrap();
+
     // Instantiate shm global.
     // let shm_pool = pool.create_pool(fd.as_raw_fd(), frame_bytes as i32, &qh, ());
     let (buffer, _) = pool.create_buffer(
@@ -109,13 +120,14 @@ pub fn create_screnshot(conn: &Connection, globals: &GlobalList, pool: &mut Slot
         if let Some(state) = state.state {
             match state {
                 FrameState::Failed => {
-                    log::error!("Frame copy failed");
+                    println!("Frame copy failed");
                     return Err(FrameError::FrameFailed);
                 }
                 FrameState::Finished => {
+                    println!("Finished");
                     // buffer.destroy();
                     // shm_pool.destroy();
-                    return Ok((buffer, format))
+                    return Ok(ScreenCopy { format, image: buffer, slot: pool })
                 }
             }
         }
@@ -126,7 +138,7 @@ pub fn create_screnshot(conn: &Connection, globals: &GlobalList, pool: &mut Slot
 
 impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureFrameState {
     fn event(
-        state: &mut Self,
+        frame: &mut Self,
         proxy: &ZwlrScreencopyFrameV1,
         event: <ZwlrScreencopyFrameV1 as wayland_client::Proxy>::Event,
         data: &(),
@@ -137,7 +149,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureFrameState {
             zwlr_screencopy_frame_v1::Event::Buffer {
                 format, width, height, stride } => {
                     if let WEnum::Value(f) = format {
-                        state.format = Some(FrameFormat {
+                        frame.format = Some(FrameFormat {
                             format: f,
                             width,
                             height,
@@ -145,15 +157,27 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureFrameState {
                         })
                     }
                 }
-            zwlr_screencopy_frame_v1::Event::Flags { flags } => todo!(),
-            zwlr_screencopy_frame_v1::Event::Ready { tv_sec_hi, tv_sec_lo, tv_nsec } => todo!(),
-            zwlr_screencopy_frame_v1::Event::Failed => todo!(),
-            zwlr_screencopy_frame_v1::Event::Damage { x, y, width, height } => todo!(),
-            zwlr_screencopy_frame_v1::Event::LinuxDmabuf { format, width, height } => todo!(),
-            zwlr_screencopy_frame_v1::Event::BufferDone => todo!(),
-            _ => todo!(),
+            zwlr_screencopy_frame_v1::Event::Flags { flags } => {
+                println!("flags!")
+            },
+            zwlr_screencopy_frame_v1::Event::Ready { tv_sec_hi, tv_sec_lo, tv_nsec } => {
+                println!("ready!");
+                frame.state.replace(FrameState::Finished);
+            }
+            zwlr_screencopy_frame_v1::Event::Failed => {
+                frame.state.replace(FrameState::Failed);
+            }
+            zwlr_screencopy_frame_v1::Event::Damage { x, y, width, height } => {
+                println!("damage!")
+            },
+            zwlr_screencopy_frame_v1::Event::LinuxDmabuf { format, width, height } => {
+                println!("dma!")
+            },
+            zwlr_screencopy_frame_v1::Event::BufferDone => {
+                frame.buffer_done.store(true, Ordering::SeqCst);
+            },
+            _ => unreachable!(),
         }
-        todo!()
     }
 }
 

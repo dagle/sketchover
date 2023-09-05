@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::io;
 
 use font_kit::source::SystemSource;
 use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
 use sketchover::config::{Args, Command, Config};
 use sketchover::draw::{Draw, DrawAction, DrawKind};
-use sketchover::pause::{FrameFormat, create_screnshot};
+use sketchover::pause::{FrameFormat, ScreenCopy, create_screenshot};
 use smithay_client_toolkit::shm::slot::Buffer;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
@@ -137,6 +138,7 @@ fn main() {
         layer_shell,
         globals,
         shm,
+        conn,
 
         exit: false,
         drawing: false,
@@ -178,6 +180,7 @@ struct SketchOver {
     globals: GlobalList,
     shm: Shm,
     outputs: Vec<OutPut>,
+    conn: Connection,
 
     exit: bool,
     drawing: bool,
@@ -200,25 +203,30 @@ struct SketchOver {
 }
 
 pub struct OutPut {
+    output: wl_output::WlOutput,
     width: u32,
     height: u32,
     info: OutputInfo,
     pool: SlotPool,
+    buffers: Buffers,
     layer: LayerSurface,
     configured: bool,
     draws: Vec<Draw>,
-    format: Option<FrameFormat>,
-    image: Option<Buffer>,
+    screencopy: Option<ScreenCopy>,
 }
 
 impl OutPut {
-    fn toggle_output(&mut self) {
-        self.format = match self.format {
+    fn toggle_output(&mut self, conn: &Connection, globals: &GlobalList, shm: &Shm) {
+        self.screencopy = match self.screencopy {
             Some(_) => {
                 None
             }
             None => {
-                let (image, format) = create_screnshot(conn, globals, pool, output)
+                let scrcpy = create_screenshot(conn, globals, shm, &self.output);
+                match scrcpy {
+                    Ok(copy) => Some(copy),
+                    Err(_) => None
+                }
             }
         }
     }
@@ -302,19 +310,22 @@ impl OutputHandler for SketchOver {
 
         layer.commit();
 
-        let pool = SlotPool::new(width as usize * height as usize * 4, &self.shm)
+        let mut pool = SlotPool::new(width as usize * height as usize * 4, &self.shm)
             .expect("Failed to create pool");
 
+        let buffers = Buffers::new(&mut pool, width, height, wl_shm::Format::Argb8888);
+
         let output = OutPut {
+            output,
             width,
             height,
             info,
             pool,
             layer,
+            buffers,
             configured: false,
             draws: Vec::new(),
-            image: None,
-            format: None,
+            screencopy: None,
         };
         self.outputs.push(output);
     }
@@ -497,11 +508,11 @@ impl KeyboardHandler for SketchOver {
                 Command::TogglePause => { 
                     if let Some(idx) = self.current_output {
                         let current = self.outputs.get_mut(idx).unwrap();
-                        current.toggle_output();
+                        current.toggle_output(&self.conn, &self.globals, &self.shm);
                     }
                 }
             },
-            None => println!("Key not found"),
+            None => println!("Key not found: {}", &str),
         }
         // match event.keysym {
         //     keysyms::KEY_Escape => {
@@ -712,17 +723,14 @@ impl SketchOver {
         {
             let width = output.width;
             let height = output.height;
-            let stride = output.width as i32 * 4;
 
-            let (buffer, canvas) = output
-                .pool
-                .create_buffer(
-                    width as i32,
-                    height as i32,
-                    stride,
-                    wl_shm::Format::Argb8888,
-                )
-                .expect("create buffer");
+            let (buffer, canvas) = if let Some(screen_copy) = &mut output.screencopy {
+                // TODO: Wrong pool in use here
+                let canvas = screen_copy.image.canvas(&mut screen_copy.slot).unwrap();
+                (&screen_copy.image, canvas)
+            } else {
+                (output.buffers.buffer(), output.buffers.canvas(&mut output.pool).unwrap())
+            };
 
             let mut dt = raqote::DrawTarget::from_backing(
                 width as i32,
@@ -730,6 +738,21 @@ impl SketchOver {
                 bytemuck::cast_slice_mut(canvas),
             );
             dt.clear(self.fgcolor);
+
+            // if let Some(screen_copy) = output.screencopy {
+
+                // io::copy(screen_copy.image, writer)
+                // for (pixel, argb) in image.pixels().zip(canvas.chunks_exact_mut(4)) {
+                //     // We do this in an horribly inefficient manner, for the sake of simplicity.
+                //     // We'll send pixels to the server in ARGB8888 format (this is one of the only
+                //     // formats that are guaranteed to be supported), but image provides it in
+                //     // big-endian RGBA8888, so we need to do the conversion.
+                //     // argb[3] = pixel.0[3];
+                //     // argb[2] = pixel.0[0];
+                //     // argb[1] = pixel.0[1];
+                //     // argb[0] = pixel.0[2];
+                // }
+            // }
 
             for draw in output.draws.iter() {
                 draw.draw(&mut dt);
@@ -757,16 +780,51 @@ impl SketchOver {
                 .wl_surface()
                 .frame(qh, output.layer.wl_surface().clone());
 
+
             // Attach and commit to present.
             buffer
                 .attach_to(output.layer.wl_surface())
                 .expect("Can't attach the buffer");
             output.layer.commit();
+            output.buffers.flip();
         }
 
         // TODO save and reuse buffer when the window size is unchanged.  This is especially
         // useful if you do damage tracking, since you don't need to redraw the undamaged parts
         // of the canvas.
+    }
+}
+
+struct Buffers {
+    buffers: [Buffer; 2],
+    current: usize,
+}
+
+impl Buffers {
+    fn new(pool: &mut SlotPool, width: u32, height: u32, format: wl_shm::Format) -> Buffers {
+        Self {
+            buffers: [
+                pool.create_buffer(width as i32, height as i32, width as i32 * 4, format)
+                    .expect("create buffer")
+                    .0,
+                pool.create_buffer(width as i32, height as i32, width as i32 * 4, format)
+                    .expect("create buffer")
+                    .0,
+            ],
+            current: 0,
+        }
+    }
+
+    fn flip(&mut self) {
+        self.current = 1 - self.current
+    }
+
+    fn buffer(&self) -> &Buffer {
+        &self.buffers[self.current]
+    }
+
+    fn canvas<'a>(&'a self, pool: &'a mut SlotPool) -> Option<&mut [u8]> {
+        self.buffers[self.current].canvas(pool)
     }
 }
 

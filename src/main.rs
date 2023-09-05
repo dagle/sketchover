@@ -739,21 +739,6 @@ impl SketchOver {
             );
             dt.clear(self.fgcolor);
 
-            // if let Some(screen_copy) = output.screencopy {
-
-                // io::copy(screen_copy.image, writer)
-                // for (pixel, argb) in image.pixels().zip(canvas.chunks_exact_mut(4)) {
-                //     // We do this in an horribly inefficient manner, for the sake of simplicity.
-                //     // We'll send pixels to the server in ARGB8888 format (this is one of the only
-                //     // formats that are guaranteed to be supported), but image provides it in
-                //     // big-endian RGBA8888, so we need to do the conversion.
-                //     // argb[3] = pixel.0[3];
-                //     // argb[2] = pixel.0[0];
-                //     // argb[1] = pixel.0[1];
-                //     // argb[0] = pixel.0[2];
-                // }
-            // }
-
             for draw in output.draws.iter() {
                 draw.draw(&mut dt);
 

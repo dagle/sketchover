@@ -16,18 +16,12 @@ cargo install --path .
 
 ## Usage
 
-The keybindings are hardcoded atm.
+Esc => quit is hardcoded.
 
-Esc => quit
+For keybindings and other option look in the config file
 
-c => clear
+sketchover uses XDG_CONFIG_HOME for it's config files. Normally this is:
 
-u => undo last draw
+$HOME/.config/sketchover/default-config.toml
 
-n => next color
-
-t => next tool
-
-+/- => change width of pen
-
-d => toggle distance
+if the file doesn't exists, run sketchover and it will populate it with default values.

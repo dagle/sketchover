@@ -76,8 +76,8 @@ impl Default for Config {
         key_map.insert("t".to_owned(), Command::NextTool);
         key_map.insert("T".to_owned(), Command::PrevTool);
         key_map.insert("d".to_owned(), Command::ToggleDistance);
-        key_map.insert("+".to_owned(), Command::IncreaseSize);
-        key_map.insert("-".to_owned(), Command::DecreaseSize);
+        key_map.insert("plus".to_owned(), Command::IncreaseSize);
+        key_map.insert("minus".to_owned(), Command::DecreaseSize);
         key_map.insert("p".to_owned(), Command::TogglePause);
         Config {
             size: 1.,

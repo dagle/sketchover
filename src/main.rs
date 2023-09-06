@@ -6,7 +6,7 @@ use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
 use sketchover::config::{Args, Command, Config};
 use sketchover::draw::{Draw, DrawAction, DrawKind};
-use sketchover::pause::{FrameFormat, ScreenCopy, create_screenshot};
+use sketchover::pause::{create_screenshot, FrameFormat, ScreenCopy};
 use smithay_client_toolkit::shm::slot::Buffer;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
@@ -218,14 +218,15 @@ pub struct OutPut {
 impl OutPut {
     fn toggle_output(&mut self, conn: &Connection, globals: &GlobalList, shm: &Shm) {
         self.screencopy = match self.screencopy {
-            Some(_) => {
-                None
-            }
+            Some(_) => None,
             None => {
                 let scrcpy = create_screenshot(conn, globals, shm, &self.output);
                 match scrcpy {
-                    Ok(copy) => Some(copy),
-                    Err(_) => None
+                    Ok(copy) => {
+                        println!("{:?}", copy);
+                        Some(copy)
+                    }
+                    Err(_) => None,
                 }
             }
         }
@@ -505,7 +506,7 @@ impl KeyboardHandler for SketchOver {
                 Command::ToggleDistance => self.distance = !self.distance,
                 Command::IncreaseSize => self.increase_size(),
                 Command::DecreaseSize => self.decrease_size(),
-                Command::TogglePause => { 
+                Command::TogglePause => {
                     if let Some(idx) = self.current_output {
                         let current = self.outputs.get_mut(idx).unwrap();
                         current.toggle_output(&self.conn, &self.globals, &self.shm);
@@ -514,46 +515,6 @@ impl KeyboardHandler for SketchOver {
             },
             None => println!("Key not found: {}", &str),
         }
-        // match event.keysym {
-        //     keysyms::KEY_Escape => {
-        //         self.exit = true;
-        //     }
-        //
-        //     keysyms::KEY_c => {
-        //         if let Some(idx) = self.current_output {
-        //             let output = &mut self.outputs[idx];
-        //             output.draws = Vec::new();
-        //         }
-        //     }
-        //     keysyms::KEY_u => {
-        //         if let Some(idx) = self.current_output {
-        //             let output = &mut self.outputs[idx];
-        //             output.draws.pop();
-        //         }
-        //     }
-        //     keysyms::KEY_n => {
-        //         self.next_color();
-        //     }
-        //     keysyms::KEY_N => {
-        //         self.prev_color();
-        //     }
-        //     keysyms::KEY_t => {
-        //         self.next_tool();
-        //     }
-        //     keysyms::KEY_T => {
-        //         self.prev_tool();
-        //     }
-        //     keysyms::KEY_d => {
-        //         self.distance = !self.distance;
-        //     }
-        //     keysyms::KEY_plus => {
-        //         self.increase_size();
-        //     }
-        //     keysyms::KEY_minus => {
-        //         self.decrease_size();
-        //     }
-        //     _ => {}
-        // }
     }
 
     fn release_key(
@@ -725,11 +686,13 @@ impl SketchOver {
             let height = output.height;
 
             let (buffer, canvas) = if let Some(screen_copy) = &mut output.screencopy {
-                // TODO: Wrong pool in use here
                 let canvas = screen_copy.image.canvas(&mut screen_copy.slot).unwrap();
                 (&screen_copy.image, canvas)
             } else {
-                (output.buffers.buffer(), output.buffers.canvas(&mut output.pool).unwrap())
+                (
+                    output.buffers.buffer(),
+                    output.buffers.canvas(&mut output.pool).unwrap(),
+                )
             };
 
             let mut dt = raqote::DrawTarget::from_backing(
@@ -737,6 +700,7 @@ impl SketchOver {
                 height as i32,
                 bytemuck::cast_slice_mut(canvas),
             );
+
             dt.clear(self.fgcolor);
 
             for draw in output.draws.iter() {
@@ -765,7 +729,6 @@ impl SketchOver {
                 .wl_surface()
                 .frame(qh, output.layer.wl_surface().clone());
 
-
             // Attach and commit to present.
             buffer
                 .attach_to(output.layer.wl_surface())
@@ -773,10 +736,6 @@ impl SketchOver {
             output.layer.commit();
             output.buffers.flip();
         }
-
-        // TODO save and reuse buffer when the window size is unchanged.  This is especially
-        // useful if you do damage tracking, since you don't need to redraw the undamaged parts
-        // of the canvas.
     }
 }
 

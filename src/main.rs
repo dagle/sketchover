@@ -309,18 +309,19 @@ impl OutputHandler for SketchOver {
         _qh: &QueueHandle<Self>,
         _output: wl_output::WlOutput,
     ) {
-        // let output = self
-        //     .outputs
-        //     .iter_mut()
-        //     .find(|x| x.layer.wl_surface() == &surface);
+        // if let Some(output) = self.outputs.iter().find(|o| o.output == output) {
+        // }
     }
 
     fn output_destroyed(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
+        output: wl_output::WlOutput,
     ) {
+        if let Some(index) = self.outputs.iter().position(|o| o.output == output) {
+            self.outputs.remove(index);
+        }
     }
 }
 

@@ -1,22 +1,19 @@
 use std::collections::HashMap;
-use std::io;
 
 use font_kit::source::SystemSource;
 use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
 use sketchover::config::{Args, Command, Config};
 use sketchover::draw::{Draw, DrawAction, DrawKind};
-use sketchover::pause::{create_screenshot, FrameFormat, ScreenCopy};
+use sketchover::pause::{create_screenshot,  ScreenCopy};
+use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
 use smithay_client_toolkit::shm::slot::Buffer;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
     delegate_registry, delegate_seat, delegate_shm,
     output::{OutputHandler, OutputInfo, OutputState},
-    reexports::protocols_wlr::screencopy::v1::client::{
-        zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1,
-        zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
-    },
+    reexports::protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
@@ -33,12 +30,13 @@ use smithay_client_toolkit::{
     },
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
+use wayland_client::WaylandSource;
 use wayland_client::globals::GlobalList;
 use wayland_client::{
     delegate_noop,
     globals::registry_queue_init,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
-    Connection, Dispatch, QueueHandle,
+    Connection, QueueHandle,
 };
 
 use xkbcommon::xkb::keysyms;
@@ -71,7 +69,7 @@ fn main() {
 
     let conn = Connection::connect_to_env().expect("Couldn't connect wayland compositor");
 
-    let (globals, mut event_queue) =
+    let (globals, event_queue) =
         registry_queue_init(&conn).expect("Couldn't create an event queue");
     let qh = event_queue.handle();
 
@@ -85,18 +83,6 @@ fn main() {
     let compositor_state =
         CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
     let layer_shell = LayerShell::bind(&globals, &qh).expect("Layer shell is not available");
-
-    let screencopy_manager = globals
-        .bind::<ZwlrScreencopyManagerV1, _, _>(&qh, 3..=3, ())
-        .expect("Couldn't create a screenshot manager");
-    // Ok(x) => x,
-    // Err(e) => {
-    //     log::error!("Failed to create screencopy manager. Does your compositor implement ZwlrScreencopy?");
-    //     log::error!("err: {e}")
-    //     // return Err(Error::ProtocolNotFound(
-    //     //     "ZwlrScreencopy Manager not found".to_string(),
-    //     // ));
-    // }
 
     let shm = Shm::bind(&globals, &qh).expect("wl_shm is not available");
 
@@ -130,6 +116,8 @@ fn main() {
         ..StrokeStyle::default()
     };
 
+    let mut event_loop = EventLoop::try_new().expect("couldn't create event-loop");
+
     let mut sketch_over = SketchOver {
         registry_state,
         seat_state,
@@ -140,7 +128,7 @@ fn main() {
         shm,
         conn,
 
-        exit: false,
+        exit: event_loop.get_signal(),
         drawing: false,
         distance: config.distance,
         keyboard: None,
@@ -157,19 +145,15 @@ fn main() {
         font,
         font_color,
         font_size,
+        start_paused: config.paused,
         key_map: config.key_map,
     };
 
-    loop {
-        if let Err(e) = event_queue.blocking_dispatch(&mut sketch_over) {
-            eprintln!("Dispatch failed: {}", e);
-            break;
-        }
+    let ws = WaylandSource::new(event_queue).unwrap();
 
-        if sketch_over.exit {
-            break;
-        }
-    }
+    ws.insert(event_loop.handle()).unwrap();
+
+    event_loop.run(None, &mut sketch_over, |_| {}).unwrap();
 }
 
 struct SketchOver {
@@ -182,7 +166,7 @@ struct SketchOver {
     outputs: Vec<OutPut>,
     conn: Connection,
 
-    exit: bool,
+    exit: LoopSignal,
     drawing: bool,
     distance: bool,
     layer_shell: LayerShell,
@@ -199,6 +183,7 @@ struct SketchOver {
     font: font_kit::loaders::freetype::Font,
     font_color: raqote::SolidSource,
     font_size: f32,
+    start_paused: bool,
     key_map: HashMap<String, Command>,
 }
 
@@ -223,7 +208,6 @@ impl OutPut {
                 let scrcpy = create_screenshot(conn, globals, shm, &self.output);
                 match scrcpy {
                     Ok(copy) => {
-                        println!("{:?}", copy);
                         Some(copy)
                     }
                     Err(_) => None,
@@ -232,21 +216,6 @@ impl OutPut {
         }
     }
 }
-
-// struct CaptureFrameState {}
-//
-// impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureFrameState {
-//     fn event(
-//         state: &mut Self,
-//         proxy: &ZwlrScreencopyFrameV1,
-//         event: <ZwlrScreencopyFrameV1 as wayland_client::Proxy>::Event,
-//         data: &(),
-//         conn: &Connection,
-//         qhandle: &QueueHandle<Self>,
-//     ) {
-//         todo!()
-//     }
-// }
 
 impl CompositorHandler for SketchOver {
     fn scale_factor_changed(
@@ -290,14 +259,14 @@ impl OutputHandler for SketchOver {
         );
 
         let Some(info) = self.output_state.info(&output) else {
-            eprintln!("Can't get screen info");
-            self.exit = true;
+            log::error!("Can't get screen info for new output");
+            self.exit.stop();
             return;
         };
 
         let Some(logical) = info.logical_size else {
-            eprintln!("Can't get logical info about the screen");
-            self.exit = true;
+            log::error!("Can't get logical info info for new output");
+            self.exit.stop();
             return;
         };
 
@@ -316,7 +285,7 @@ impl OutputHandler for SketchOver {
 
         let buffers = Buffers::new(&mut pool, width, height, wl_shm::Format::Argb8888);
 
-        let output = OutPut {
+        let mut output = OutPut {
             output,
             width,
             height,
@@ -328,6 +297,9 @@ impl OutputHandler for SketchOver {
             draws: Vec::new(),
             screencopy: None,
         };
+        if self.start_paused {
+            output.toggle_output(&self.conn, &self.globals, &self.shm)
+        }
         self.outputs.push(output);
     }
 
@@ -354,7 +326,7 @@ impl OutputHandler for SketchOver {
 
 impl LayerShellHandler for SketchOver {
     fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
-        self.exit = true;
+        self.exit.stop();
     }
 
     fn configure(
@@ -481,7 +453,7 @@ impl KeyboardHandler for SketchOver {
     ) {
         // Esc is hardcoded
         if event.keysym == keysyms::KEY_Escape {
-            self.exit = true;
+            self.exit.stop();
             return;
         }
         let str = xkbcommon::xkb::keysym_get_name(event.keysym);
@@ -513,7 +485,7 @@ impl KeyboardHandler for SketchOver {
                     }
                 }
             },
-            None => println!("Key not found: {}", &str),
+            None => log::warn!("Key not found: {}", &str),
         }
     }
 
@@ -685,23 +657,23 @@ impl SketchOver {
             let width = output.width;
             let height = output.height;
 
-            let (buffer, canvas) = if let Some(screen_copy) = &mut output.screencopy {
-                let canvas = screen_copy.image.canvas(&mut screen_copy.slot).unwrap();
-                (&screen_copy.image, canvas)
+            let (buffer, canvas) = (output.buffers.buffer(),
+                    output.buffers.canvas(&mut output.pool).expect("Couldn't create canvas for drawing"));
+
+
+            if let Some(screen_copy) = &mut output.screencopy {
+                let screen_canvas = screen_copy.image.canvas(&mut screen_copy.slot)
+                    .expect("Couldn't copy the screencopy to the canvas");
+                canvas.clone_from_slice(screen_canvas);
             } else {
-                (
-                    output.buffers.buffer(),
-                    output.buffers.canvas(&mut output.pool).unwrap(),
-                )
-            };
+                canvas.fill(0);
+            }
 
             let mut dt = raqote::DrawTarget::from_backing(
                 width as i32,
                 height as i32,
                 bytemuck::cast_slice_mut(canvas),
             );
-
-            dt.clear(self.fgcolor);
 
             for draw in output.draws.iter() {
                 draw.draw(&mut dt);

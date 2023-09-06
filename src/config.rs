@@ -8,12 +8,14 @@ use crate::draw::DrawKind;
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
+    /// The size of the pen used for drawing
     #[clap(short, long)]
     size: Option<f32>,
 
     #[clap(short, long)]
     color: Option<String>,
 
+    /// Colors in the palette other than the current color
     #[clap(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
     palette: Option<Vec<String>>,
 
@@ -22,6 +24,8 @@ pub struct Args {
 
     // #[clap(long, value_enum)]
     // unit: Option<Unit>,
+
+    /// Foreground color
     #[clap(short, long)]
     foreground: Option<String>,
 
@@ -36,6 +40,10 @@ pub struct Args {
 
     #[clap(long)]
     font_size: Option<f32>,
+
+    /// Should sketchover start in paused state
+    #[clap(long)]
+    paused: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -49,6 +57,7 @@ pub struct Config {
     pub starting_tool: DrawKind,
     pub font: Option<String>,
     pub font_size: f32,
+    pub paused: bool,
     pub key_map: HashMap<String, Command>,
 }
 
@@ -89,6 +98,7 @@ impl Default for Config {
             starting_tool: DrawKind::Pen,
             font: None,
             font_size: 12.,
+            paused: false,
             key_map,
         }
     }
@@ -117,6 +127,7 @@ impl Config {
             cfg.font = Some(font);
         }
         overwrite!(cfg.font_size, args.font_size);
+        overwrite!(cfg.paused, args.paused);
         Ok(cfg)
     }
 }

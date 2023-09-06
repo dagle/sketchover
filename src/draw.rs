@@ -140,7 +140,6 @@ impl Draw {
                 (self.start.0 + x + 15.) as f32,
                 (self.start.1 + y + 15.) as f32,
             ),
-            // TODO:
             DrawAction::Circle(x, y) => raqote::Point::new(
                 (self.start.0 + x + 15.) as f32,
                 (self.start.1 + y + 15.) as f32,
@@ -163,6 +162,7 @@ impl Draw {
     }
 }
 
+// This function is buggy and should be fixed upstream
 pub fn draw_text(
     dt: &mut DrawTarget<&mut [u32]>,
     font: &Font,

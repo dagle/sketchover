@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use font_kit::source::SystemSource;
 use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
-use sketchover::config::{Args, Bind, Command, Config};
+use sketchover::config::{Args, Bind, Command, Config, KeyMap, Mouse, MouseMap};
 use sketchover::draw::{Draw, DrawAction, DrawKind};
 use sketchover::pause::{create_screenshot, ScreenCopy};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
@@ -147,6 +147,7 @@ fn main() {
         font_size,
         start_paused: config.paused,
         key_map: config.key_map,
+        mouse_map: config.mouse_map,
     };
 
     let ws = WaylandSource::new(event_queue).unwrap();
@@ -184,7 +185,8 @@ struct SketchOver {
     font_color: raqote::SolidSource,
     font_size: f32,
     start_paused: bool,
-    key_map: HashMap<String, Bind>,
+    key_map: HashMap<KeyMap, Bind>,
+    mouse_map: HashMap<MouseMap, Bind>,
 }
 
 pub struct OutPut {
@@ -455,12 +457,17 @@ impl KeyboardHandler for SketchOver {
             self.exit.stop();
             return;
         }
-        let str = xkbcommon::xkb::keysym_get_name(event.keysym);
-        match self.key_map.get(&str) {
+
+        let keymap = KeyMap {
+            key: event.keysym,
+            modifier: self.modifiers,
+        };
+        
+        match self.key_map.get(&keymap) {
             Some(command) => match command {
                 Bind {
                     command: Command::Clear,
-                    arg: _,
+                    ..
                 } => {
                     if let Some(idx) = self.current_output {
                         let output = &mut self.outputs[idx];
@@ -469,7 +476,7 @@ impl KeyboardHandler for SketchOver {
                 }
                 Bind {
                     command: Command::Undo,
-                    arg: _,
+                    ..
                 } => {
                     if let Some(idx) = self.current_output {
                         let output = &mut self.outputs[idx];
@@ -478,35 +485,35 @@ impl KeyboardHandler for SketchOver {
                 }
                 Bind {
                     command: Command::NextColor,
-                    arg: _,
+                    ..
                 } => self.next_color(),
                 Bind {
                     command: Command::PrevColor,
-                    arg: _,
+                    ..
                 } => self.prev_color(),
                 Bind {
                     command: Command::NextTool,
-                    arg: _,
+                    ..
                 } => self.next_tool(),
                 Bind {
                     command: Command::PrevTool,
-                    arg: _,
+                    ..
                 } => self.prev_tool(),
                 Bind {
                     command: Command::ToggleDistance,
-                    arg: _,
+                    ..
                 } => self.prev_tool(),
                 Bind {
                     command: Command::IncreaseSize,
-                    arg: _,
+                    ..
                 } => self.increase_size(),
                 Bind {
                     command: Command::DecreaseSize,
-                    arg: _,
+                    ..
                 } => self.decrease_size(),
                 Bind {
                     command: Command::TogglePause,
-                    arg: _,
+                    ..
                 } => {
                     if let Some(idx) = self.current_output {
                         let current = self.outputs.get_mut(idx).unwrap();
@@ -524,11 +531,26 @@ impl KeyboardHandler for SketchOver {
                             log::error!("Couldn't spawn process {cmd} with error: {err}");
                         }
                     } else {
-                        log::error!("Couldn't no command bind to execute: {}", &str);
+                        // log::error!("Couldn't no command bind to execute: {}", &str);
                     }
                 }
+                Bind {
+                    command: Command::Save,
+                    ..
+                } => {
+                    // TODO: save output.draws into a file
+                    // how to handle multiple outputs? Save info about them
+                    // and when we deserilize we check if the outputs match?
+
+                    // How to resume? Since the output isn't created at startup but
+                    // rather in a callback. How would one resume this?
+                }
             },
-            None => log::warn!("Key not found: {}", &str),
+            // None => log::warn!("Key not found: {}", keymap),
+            None => {
+                println!("Key not found: {:?}", keymap);
+                println!("Key not found: {:?}", self.key_map);
+            }
         }
     }
 
@@ -597,7 +619,17 @@ impl PointerHandler for SketchOver {
                         }
                     }
                 }
-                Press { .. } => {
+                Press { button, .. } => {
+
+                    let mouse_map = MouseMap {
+                        event: Mouse::Button(button),
+                    };
+
+                    // match self.mouse_map.get(&mouse_map) {
+                    //     Some(_) => todo!(),
+                    //     None => todo!(),
+                    // }
+
                     self.drawing = true;
 
                     if let Some(output) = self
@@ -626,7 +658,10 @@ impl PointerHandler for SketchOver {
                 Release { .. } => {
                     self.drawing = false;
                 }
-                Axis { .. } => {}
+                Axis { .. } => {
+
+                    println!("scroll");
+                }
             }
         }
     }

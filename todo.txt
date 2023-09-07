@@ -6,3 +6,7 @@
 - make it possible to escape/run a program
 
 - Add support for mousepointers [when next way of smithway 0.18 is released]
+
+- Convert to the new keybinding system
+-- A convert function to convert to a Key + Modifier from String + Vec<String>
+-- Do mouse bindings

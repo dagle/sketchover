@@ -27,6 +27,7 @@ pub enum DrawKind {
     Circle,
 }
 
+#[derive(Serialize, Deserialize)]
 pub enum DrawAction {
     Pen(Vec<(f64, f64)>),
     Line(f64, f64),

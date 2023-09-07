@@ -24,7 +24,6 @@ pub struct Args {
 
     // #[clap(long, value_enum)]
     // unit: Option<Unit>,
-
     /// Foreground color
     #[clap(short, long)]
     foreground: Option<String>,
@@ -58,7 +57,8 @@ pub struct Config {
     pub font: Option<String>,
     pub font_size: f32,
     pub paused: bool,
-    pub key_map: HashMap<String, Command>,
+    pub key_map: HashMap<String, Bind>,
+    pub key_map2: HashMap<Key, Bind>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -73,21 +73,60 @@ pub enum Command {
     IncreaseSize,
     DecreaseSize,
     TogglePause,
+    Execute,
+}
+
+// A keybinding or a mouse binding
+#[derive(Serialize, Deserialize)]
+pub struct Bind {
+    pub command: Command,
+    pub arg: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Hash, Eq, PartialEq)]
+pub struct Key {
+    pub key: String,
+    pub modifier: Vec<String>,
+}
+
+macro_rules! noarg {
+    ($var:expr) => {
+        Bind {
+            command: $var,
+            // arg: "".to_owned(),
+            arg: None,
+        }
+    };
 }
 
 impl Default for Config {
     fn default() -> Self {
         let mut key_map = HashMap::new();
-        key_map.insert("c".to_owned(), Command::Clear);
-        key_map.insert("u".to_owned(), Command::Undo);
-        key_map.insert("n".to_owned(), Command::NextColor);
-        key_map.insert("N".to_owned(), Command::PrevColor);
-        key_map.insert("t".to_owned(), Command::NextTool);
-        key_map.insert("T".to_owned(), Command::PrevTool);
-        key_map.insert("d".to_owned(), Command::ToggleDistance);
-        key_map.insert("plus".to_owned(), Command::IncreaseSize);
-        key_map.insert("minus".to_owned(), Command::DecreaseSize);
-        key_map.insert("p".to_owned(), Command::TogglePause);
+        key_map.insert("c".to_owned(), noarg!(Command::Clear));
+        key_map.insert("u".to_owned(), noarg!(Command::Undo));
+        key_map.insert("n".to_owned(), noarg!(Command::NextColor));
+        key_map.insert("N".to_owned(), noarg!(Command::PrevColor));
+        key_map.insert("t".to_owned(), noarg!(Command::NextTool));
+        key_map.insert("T".to_owned(), noarg!(Command::PrevTool));
+        key_map.insert("d".to_owned(), noarg!(Command::ToggleDistance));
+        key_map.insert("plus".to_owned(), noarg!(Command::IncreaseSize));
+        key_map.insert("minus".to_owned(), noarg!(Command::DecreaseSize));
+        key_map.insert("p".to_owned(), noarg!(Command::TogglePause));
+        key_map.insert(
+            "x".to_owned(),
+            Bind {
+                command: Command::Execute,
+                arg: Some("grim -g \"$(slurp)\"".to_owned()),
+            },
+        );
+        let mut key_map2 = HashMap::new();
+        key_map2.insert(
+            Key {
+                key: "c".to_owned(),
+                modifier: Vec::new(),
+            },
+            noarg!(Command::Clear),
+        );
         Config {
             size: 1.,
             color: String::from("#FF0000FF"),
@@ -100,6 +139,7 @@ impl Default for Config {
             font_size: 12.,
             paused: false,
             key_map,
+            key_map2,
         }
     }
 }

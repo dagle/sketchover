@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use font_kit::source::SystemSource;
 use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
-use sketchover::config::{Args, Command, Config};
+use sketchover::config::{Args, Bind, Command, Config};
 use sketchover::draw::{Draw, DrawAction, DrawKind};
-use sketchover::pause::{create_screenshot,  ScreenCopy};
+use sketchover::pause::{create_screenshot, ScreenCopy};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
 use smithay_client_toolkit::shm::slot::Buffer;
 use smithay_client_toolkit::{
@@ -30,8 +30,8 @@ use smithay_client_toolkit::{
     },
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
-use wayland_client::WaylandSource;
 use wayland_client::globals::GlobalList;
+use wayland_client::WaylandSource;
 use wayland_client::{
     delegate_noop,
     globals::registry_queue_init,
@@ -184,7 +184,7 @@ struct SketchOver {
     font_color: raqote::SolidSource,
     font_size: f32,
     start_paused: bool,
-    key_map: HashMap<String, Command>,
+    key_map: HashMap<String, Bind>,
 }
 
 pub struct OutPut {
@@ -207,9 +207,7 @@ impl OutPut {
             None => {
                 let scrcpy = create_screenshot(conn, globals, shm, &self.output);
                 match scrcpy {
-                    Ok(copy) => {
-                        Some(copy)
-                    }
+                    Ok(copy) => Some(copy),
                     Err(_) => None,
                 }
             }
@@ -460,29 +458,73 @@ impl KeyboardHandler for SketchOver {
         let str = xkbcommon::xkb::keysym_get_name(event.keysym);
         match self.key_map.get(&str) {
             Some(command) => match command {
-                Command::Clear => {
+                Bind {
+                    command: Command::Clear,
+                    arg: _,
+                } => {
                     if let Some(idx) = self.current_output {
                         let output = &mut self.outputs[idx];
                         output.draws = Vec::new();
                     }
                 }
-                Command::Undo => {
+                Bind {
+                    command: Command::Undo,
+                    arg: _,
+                } => {
                     if let Some(idx) = self.current_output {
                         let output = &mut self.outputs[idx];
                         output.draws.pop();
                     }
                 }
-                Command::NextColor => self.next_color(),
-                Command::PrevColor => self.prev_color(),
-                Command::NextTool => self.next_tool(),
-                Command::PrevTool => self.prev_tool(),
-                Command::ToggleDistance => self.distance = !self.distance,
-                Command::IncreaseSize => self.increase_size(),
-                Command::DecreaseSize => self.decrease_size(),
-                Command::TogglePause => {
+                Bind {
+                    command: Command::NextColor,
+                    arg: _,
+                } => self.next_color(),
+                Bind {
+                    command: Command::PrevColor,
+                    arg: _,
+                } => self.prev_color(),
+                Bind {
+                    command: Command::NextTool,
+                    arg: _,
+                } => self.next_tool(),
+                Bind {
+                    command: Command::PrevTool,
+                    arg: _,
+                } => self.prev_tool(),
+                Bind {
+                    command: Command::ToggleDistance,
+                    arg: _,
+                } => self.prev_tool(),
+                Bind {
+                    command: Command::IncreaseSize,
+                    arg: _,
+                } => self.increase_size(),
+                Bind {
+                    command: Command::DecreaseSize,
+                    arg: _,
+                } => self.decrease_size(),
+                Bind {
+                    command: Command::TogglePause,
+                    arg: _,
+                } => {
                     if let Some(idx) = self.current_output {
                         let current = self.outputs.get_mut(idx).unwrap();
                         current.toggle_output(&self.conn, &self.globals, &self.shm);
+                    }
+                }
+                Bind {
+                    command: Command::Execute,
+                    arg: cmd,
+                } => {
+                    if let Some(cmd) = cmd {
+                        if let Err(err) =
+                            std::process::Command::new("sh").arg("-c").arg(cmd).output()
+                        {
+                            log::error!("Couldn't spawn process {cmd} with error: {err}");
+                        }
+                    } else {
+                        log::error!("Couldn't no command bind to execute: {}", &str);
                     }
                 }
             },
@@ -658,12 +700,18 @@ impl SketchOver {
             let width = output.width;
             let height = output.height;
 
-            let (buffer, canvas) = (output.buffers.buffer(),
-                    output.buffers.canvas(&mut output.pool).expect("Couldn't create canvas for drawing"));
-
+            let (buffer, canvas) = (
+                output.buffers.buffer(),
+                output
+                    .buffers
+                    .canvas(&mut output.pool)
+                    .expect("Couldn't create canvas for drawing"),
+            );
 
             if let Some(screen_copy) = &mut output.screencopy {
-                let screen_canvas = screen_copy.image.canvas(&mut screen_copy.slot)
+                let screen_canvas = screen_copy
+                    .image
+                    .canvas(&mut screen_copy.slot)
                     .expect("Couldn't copy the screencopy to the canvas");
                 canvas.clone_from_slice(screen_canvas);
             } else {

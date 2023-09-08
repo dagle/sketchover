@@ -72,7 +72,7 @@ pub struct Config {
     pub mouse_map: HashMap<MouseMap, Command>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Command {
     Clear,
     Undo,
@@ -89,8 +89,18 @@ pub enum Command {
     Combo(Vec<Command>),
     Nop,
     // draw action
-    // DrawStart,
+    DrawStart,
     // AltDrawStart,
+}
+
+impl Command {
+    pub fn draw_command(&self) -> bool {
+        // this is a match because there will be multiple commands that can trigger a draw
+        match self {
+            Command::DrawStart => true,
+            _ => false
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Hash, Eq, PartialEq)]

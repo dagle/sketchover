@@ -462,59 +462,8 @@ impl KeyboardHandler for SketchOver {
             key: event.keysym,
             modifier: self.modifiers,
         };
-
-        // let cmd = self.key_map.get(&keymap).unwrap_or(&Command::Nop);
-        // self.command(cmd);
-
-        match self.key_map.get(&keymap) {
-            Some(command) => match command {
-                Command::Clear => {
-                    if let Some(idx) = self.current_output {
-                        let output = &mut self.outputs[idx];
-                        output.draws = Vec::new();
-                    }
-                }
-                Command::Undo => {
-                    if let Some(idx) = self.current_output {
-                        let output = &mut self.outputs[idx];
-                        output.draws.pop();
-                    }
-                }
-                Command::NextColor => self.next_color(),
-                Command::PrevColor => self.prev_color(),
-                Command::NextTool => self.next_tool(),
-                Command::PrevTool => self.prev_tool(),
-                Command::ToggleDistance => self.prev_tool(),
-                Command::IncreaseSize(step) => self.increase_size(*step),
-                Command::DecreaseSize(step) => self.decrease_size(*step),
-                Command::TogglePause => {
-                    if let Some(idx) = self.current_output {
-                        let current = self.outputs.get_mut(idx).unwrap();
-                        current.toggle_output(&self.conn, &self.globals, &self.shm);
-                    }
-                }
-                Command::Execute(cmd) => {
-                    if let Err(err) = std::process::Command::new("sh").arg("-c").arg(cmd).output() {
-                        log::error!("Couldn't spawn process {cmd} with error: {err}");
-                    }
-                }
-                Command::Save => {
-                    // TODO: save output.draws into a file
-                    // how to handle multiple outputs? Save info about them
-                    // and when we deserilize we check if the outputs match?
-
-                    // How to resume? Since the output isn't created at startup but
-                    // rather in a callback. How would one resume this?
-                }
-                Command::Combo(cmds) => {}
-                Command::Nop => {}
-            },
-            // None => log::warn!("Key not found: {}", keymap),
-            None => {
-                println!("Key not found: {:?}", keymap);
-                println!("Key not found: {:?}", self.key_map);
-            }
-        }
+        let cmd = self.key_map.get(&keymap).unwrap_or(&Command::Nop);
+        self.command(&cmd.clone());
     }
 
     fn release_key(
@@ -727,8 +676,14 @@ impl SketchOver {
                 // How to resume? Since the output isn't created at startup but
                 // rather in a callback. How would one resume this?
             }
-            Command::Combo(cmds) => {}
+            Command::Combo(cmds) => {
+                for cmd in cmds {
+                    self.command(cmd)
+                }
+            }
+            // do nothing
             Command::Nop => {}
+            Command::DrawStart => {}
         }
     }
 

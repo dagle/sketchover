@@ -1,8 +1,12 @@
 use core::fmt;
-use std::{collections::HashMap, hash::Hash, default};
+use std::{collections::HashMap, default, hash::Hash};
 
 use clap::Parser;
-use serde::{Deserialize, Serialize, ser::SerializeStruct, Deserializer, de::{Visitor, SeqAccess, self, MapAccess}};
+use serde::{
+    de::{self, MapAccess, SeqAccess, Visitor},
+    ser::SerializeStruct,
+    Deserialize, Deserializer, Serialize,
+};
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 use crate::draw::DrawKind;
@@ -48,7 +52,7 @@ pub struct Args {
 
     /// How senisitve should scrolling be
     #[clap(long)]
-    pub scroll_margine: f64,
+    pub scroll_margine: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -64,8 +68,8 @@ pub struct Config {
     pub font: Option<String>,
     pub font_size: f32,
     pub paused: bool,
-    pub key_map: HashMap<KeyMap, Bind>,
-    pub mouse_map: HashMap<MouseMap, Bind>,
+    pub key_map: HashMap<KeyMap, Command>,
+    pub mouse_map: HashMap<MouseMap, Command>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -77,33 +81,22 @@ pub enum Command {
     NextTool,
     PrevTool,
     ToggleDistance,
-    IncreaseSize,
-    DecreaseSize,
+    IncreaseSize(f32),
+    DecreaseSize(f32),
     TogglePause,
-    Execute,
+    Execute(String),
     Save,
-}
-
-// A keybinding or a mouse binding
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Bind {
-    pub command: Command,
-    pub arg: Option<String>,
+    Combo(Vec<Command>),
+    Nop,
+    // draw action
+    // DrawStart,
+    // AltDrawStart,
 }
 
 #[derive(Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub struct Key {
     pub key: String,
     pub modifier: Vec<String>,
-}
-
-macro_rules! noarg {
-    ($var:expr) => {
-        Bind {
-            command: $var,
-            arg: None,
-        }
-    };
 }
 
 #[derive(Hash, Serialize, Deserialize, Eq, PartialEq)]
@@ -119,13 +112,10 @@ pub enum Mouse {
     Button(u32),
 }
 
-// impl MouseMap {
-// }
-
 #[derive(Debug)]
 pub struct KeyMap {
     pub key: u32,
-    pub modifier: Modifiers
+    pub modifier: Modifiers,
 }
 
 impl KeyMap {
@@ -139,11 +129,11 @@ impl KeyMap {
 
 impl PartialEq for KeyMap {
     fn eq(&self, other: &Self) -> bool {
-        self.key == other.key && 
-            self.modifier.ctrl == other.modifier.ctrl &&
-            self.modifier.alt == other.modifier.alt &&
-            self.modifier.shift == other.modifier.shift &&
-            self.modifier.logo == other.modifier.logo
+        self.key == other.key
+            && self.modifier.ctrl == other.modifier.ctrl
+            && self.modifier.alt == other.modifier.alt
+            && self.modifier.shift == other.modifier.shift
+            && self.modifier.logo == other.modifier.logo
     }
 }
 
@@ -160,7 +150,7 @@ impl Hash for KeyMap {
 impl Serialize for KeyMap {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer 
+        S: serde::Serializer,
     {
         let mut state = serializer.serialize_struct("Key", 2)?;
         let key_str = xkbcommon::xkb::keysym_get_name(self.key);
@@ -190,7 +180,10 @@ impl<'de> Deserialize<'de> for KeyMap {
     {
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field { Key, Modifier }
+        enum Field {
+            Key,
+            Modifier,
+        }
 
         struct KeyMapVisitor;
 
@@ -205,10 +198,12 @@ impl<'de> Deserialize<'de> for KeyMap {
             where
                 V: SeqAccess<'de>,
             {
-                let k: String = seq.next_element()?
+                let k: String = seq
+                    .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
                 let key = xkbcommon::xkb::keysym_from_name(&k, xkbcommon::xkb::KEYSYM_NO_FLAGS);
-                let v: Vec<String> = seq.next_element()?
+                let v: Vec<String> = seq
+                    .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(1, &self))?;
                 let modifier = to_modifier(&v).map_err(de::Error::custom)?;
                 Ok(KeyMap { key, modifier })
@@ -228,7 +223,9 @@ impl<'de> Deserialize<'de> for KeyMap {
                             }
                             let k: String = map.next_value()?;
                             key = Some(xkbcommon::xkb::keysym_from_name(
-                                    &k, xkbcommon::xkb::KEYSYM_NO_FLAGS));
+                                &k,
+                                xkbcommon::xkb::KEYSYM_NO_FLAGS,
+                            ));
                         }
                         Field::Modifier => {
                             if modifier.is_some() {
@@ -252,7 +249,6 @@ impl<'de> Deserialize<'de> for KeyMap {
 
 impl Eq for KeyMap {}
 
-
 pub fn to_modifier(slice: &[String]) -> Result<Modifiers, String> {
     let mut modifiers = Modifiers::default();
     for m in slice {
@@ -261,9 +257,7 @@ pub fn to_modifier(slice: &[String]) -> Result<Modifiers, String> {
             "alt" => modifiers.alt = true,
             "shift" => modifiers.shift = true,
             "logo" => modifiers.logo = true,
-            x => {
-                return Err(format!("{x} is not a modifier"))
-            }
+            x => return Err(format!("{x} is not a modifier")),
         }
     }
     Ok(modifiers)
@@ -283,67 +277,51 @@ impl From<Key> for KeyMap {
                 }
             }
         }
-        let keysym = xkbcommon::xkb::keysym_from_name(&key.key, xkbcommon::xkb::KEYSYM_CASE_INSENSITIVE);
-        KeyMap { key: keysym, modifier: modifiers }
+        let keysym =
+            xkbcommon::xkb::keysym_from_name(&key.key, xkbcommon::xkb::KEYSYM_CASE_INSENSITIVE);
+        KeyMap {
+            key: keysym,
+            modifier: modifiers,
+        }
     }
 }
 
 impl Default for Config {
     fn default() -> Self {
         let mut key_map = HashMap::new();
-        key_map.insert(
-            KeyMap::new("c", Modifiers::default()),
-            noarg!(Command::Clear),
-        );
-        key_map.insert(
-            KeyMap::new("u", Modifiers::default()),
-            noarg!(Command::Undo),
-        );
-        key_map.insert(
-            KeyMap::new("n", Modifiers::default()),
-            noarg!(Command::NextColor),
-        );
-        key_map.insert(
-            KeyMap::new("N", Modifiers::default()),
-            noarg!(Command::PrevColor),
-        );
-        key_map.insert(
-            KeyMap::new("t", Modifiers::default()),
-            noarg!(Command::NextTool),
-        );
-        key_map.insert(
-            KeyMap::new("T", Modifiers::default()),
-            noarg!(Command::PrevTool),
-        );
+        key_map.insert(KeyMap::new("c", Modifiers::default()), Command::Clear);
+        key_map.insert(KeyMap::new("u", Modifiers::default()), Command::Undo);
+        key_map.insert(KeyMap::new("n", Modifiers::default()), Command::NextColor);
+        key_map.insert(KeyMap::new("N", Modifiers::default()), Command::PrevColor);
+        key_map.insert(KeyMap::new("t", Modifiers::default()), Command::NextTool);
+        key_map.insert(KeyMap::new("T", Modifiers::default()), Command::PrevTool);
         key_map.insert(
             KeyMap::new("d", Modifiers::default()),
-            noarg!(Command::ToggleDistance),
+            Command::ToggleDistance,
         );
         key_map.insert(
             KeyMap::new("plus", Modifiers::default()),
-            noarg!(Command::IncreaseSize),
+            Command::IncreaseSize(1.),
         );
         key_map.insert(
             KeyMap::new("minus", Modifiers::default()),
-            noarg!(Command::DecreaseSize),
+            Command::DecreaseSize(1.),
         );
-        key_map.insert(
-            KeyMap::new("p", Modifiers::default()),
-            noarg!(Command::TogglePause),
-        );
+        key_map.insert(KeyMap::new("p", Modifiers::default()), Command::TogglePause);
         key_map.insert(
             KeyMap::new("x", Modifiers::default()),
-            Bind {
-                command: Command::Execute,
-                arg: Some("grim -g \"$(slurp)\"".to_owned()),
-            },
+            Command::Execute("grim -g \"$(slurp)\"".to_owned()),
+        );
+        key_map.insert(
+            KeyMap::new("m", Modifiers::default()),
+            Command::Combo(vec![Command::Clear, Command::IncreaseSize(1.)]),
         );
         let mut mouse_map = HashMap::new();
         mouse_map.insert(
             MouseMap {
-                event: Mouse::Button(2)
+                event: Mouse::Button(2),
             },
-            noarg!(Command::PrevTool)
+            Command::PrevTool,
         );
 
         Config {

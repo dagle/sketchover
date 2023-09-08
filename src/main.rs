@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use font_kit::source::SystemSource;
 use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
-use sketchover::config::{Args, Bind, Command, Config, KeyMap, Mouse, MouseMap};
+use sketchover::config::{Args, Command, Config, KeyMap, Mouse, MouseMap};
 use sketchover::draw::{Draw, DrawAction, DrawKind};
 use sketchover::pause::{create_screenshot, ScreenCopy};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
@@ -185,8 +185,8 @@ struct SketchOver {
     font_color: raqote::SolidSource,
     font_size: f32,
     start_paused: bool,
-    key_map: HashMap<KeyMap, Bind>,
-    mouse_map: HashMap<MouseMap, Bind>,
+    key_map: HashMap<KeyMap, Command>,
+    mouse_map: HashMap<MouseMap, Command>,
 }
 
 pub struct OutPut {
@@ -462,82 +462,43 @@ impl KeyboardHandler for SketchOver {
             key: event.keysym,
             modifier: self.modifiers,
         };
-        
+
+        // let cmd = self.key_map.get(&keymap).unwrap_or(&Command::Nop);
+        // self.command(cmd);
+
         match self.key_map.get(&keymap) {
             Some(command) => match command {
-                Bind {
-                    command: Command::Clear,
-                    ..
-                } => {
+                Command::Clear => {
                     if let Some(idx) = self.current_output {
                         let output = &mut self.outputs[idx];
                         output.draws = Vec::new();
                     }
                 }
-                Bind {
-                    command: Command::Undo,
-                    ..
-                } => {
+                Command::Undo => {
                     if let Some(idx) = self.current_output {
                         let output = &mut self.outputs[idx];
                         output.draws.pop();
                     }
                 }
-                Bind {
-                    command: Command::NextColor,
-                    ..
-                } => self.next_color(),
-                Bind {
-                    command: Command::PrevColor,
-                    ..
-                } => self.prev_color(),
-                Bind {
-                    command: Command::NextTool,
-                    ..
-                } => self.next_tool(),
-                Bind {
-                    command: Command::PrevTool,
-                    ..
-                } => self.prev_tool(),
-                Bind {
-                    command: Command::ToggleDistance,
-                    ..
-                } => self.prev_tool(),
-                Bind {
-                    command: Command::IncreaseSize,
-                    ..
-                } => self.increase_size(),
-                Bind {
-                    command: Command::DecreaseSize,
-                    ..
-                } => self.decrease_size(),
-                Bind {
-                    command: Command::TogglePause,
-                    ..
-                } => {
+                Command::NextColor => self.next_color(),
+                Command::PrevColor => self.prev_color(),
+                Command::NextTool => self.next_tool(),
+                Command::PrevTool => self.prev_tool(),
+                Command::ToggleDistance => self.prev_tool(),
+                Command::IncreaseSize(step) => self.increase_size(*step),
+                Command::DecreaseSize(step) => self.decrease_size(*step),
+                Command::TogglePause => {
                     if let Some(idx) = self.current_output {
                         let current = self.outputs.get_mut(idx).unwrap();
                         current.toggle_output(&self.conn, &self.globals, &self.shm);
                     }
                 }
-                Bind {
-                    command: Command::Execute,
-                    arg: cmd,
-                } => {
-                    if let Some(cmd) = cmd {
-                        if let Err(err) =
-                            std::process::Command::new("sh").arg("-c").arg(cmd).output()
-                        {
-                            log::error!("Couldn't spawn process {cmd} with error: {err}");
-                        }
-                    } else {
-                        // log::error!("Couldn't no command bind to execute: {}", &str);
+                Command::Execute(cmd) => {
+                    if let Err(err) = std::process::Command::new("sh").arg("-c").arg(cmd).output() {
+                        log::error!("Couldn't spawn process {cmd} with error: {err}");
                     }
                 }
-                Bind {
-                    command: Command::Save,
-                    ..
-                } => {
+                Command::Save => {
                     // TODO: save output.draws into a file
                     // how to handle multiple outputs? Save info about them
                     // and when we deserilize we check if the outputs match?
@@ -545,6 +506,8 @@ impl KeyboardHandler for SketchOver {
                     // How to resume? Since the output isn't created at startup but
                     // rather in a callback. How would one resume this?
                 }
+                Command::Combo(cmds) => {}
+                Command::Nop => {}
             },
             // None => log::warn!("Key not found: {}", keymap),
             None => {
@@ -620,7 +583,6 @@ impl PointerHandler for SketchOver {
                     }
                 }
                 Press { button, .. } => {
-
                     let mouse_map = MouseMap {
                         event: Mouse::Button(button),
                     };
@@ -659,7 +621,6 @@ impl PointerHandler for SketchOver {
                     self.drawing = false;
                 }
                 Axis { .. } => {
-
                     println!("scroll");
                 }
             }
@@ -706,12 +667,12 @@ impl SketchOver {
         };
     }
 
-    pub fn increase_size(&mut self) {
-        self.current_style.width += 1.;
+    pub fn increase_size(&mut self, step: f32) {
+        self.current_style.width += step;
     }
 
-    pub fn decrease_size(&mut self) {
-        self.current_style.width -= 1.;
+    pub fn decrease_size(&mut self, step: f32) {
+        self.current_style.width -= step;
         if self.current_style.width < 0. {
             self.current_style.width = 1.;
         }
@@ -724,6 +685,51 @@ impl SketchOver {
             }
         }
         None
+    }
+
+    pub fn command(&mut self, cmd: &Command) {
+        match cmd {
+            Command::Clear => {
+                if let Some(idx) = self.current_output {
+                    let output = &mut self.outputs[idx];
+                    output.draws = Vec::new();
+                }
+            }
+            Command::Undo => {
+                if let Some(idx) = self.current_output {
+                    let output = &mut self.outputs[idx];
+                    output.draws.pop();
+                }
+            }
+            Command::NextColor => self.next_color(),
+            Command::PrevColor => self.prev_color(),
+            Command::NextTool => self.next_tool(),
+            Command::PrevTool => self.prev_tool(),
+            Command::ToggleDistance => self.prev_tool(),
+            Command::IncreaseSize(step) => self.increase_size(*step),
+            Command::DecreaseSize(step) => self.decrease_size(*step),
+            Command::TogglePause => {
+                if let Some(idx) = self.current_output {
+                    let current = self.outputs.get_mut(idx).unwrap();
+                    current.toggle_output(&self.conn, &self.globals, &self.shm);
+                }
+            }
+            Command::Execute(ref cmd) => {
+                if let Err(err) = std::process::Command::new("sh").arg("-c").arg(cmd).output() {
+                    log::error!("Couldn't spawn process {cmd} with error: {err}");
+                }
+            }
+            Command::Save => {
+                // TODO: save output.draws into a file
+                // how to handle multiple outputs? Save info about them
+                // and when we deserilize we check if the outputs match?
+
+                // How to resume? Since the output isn't created at startup but
+                // rather in a callback. How would one resume this?
+            }
+            Command::Combo(cmds) => {}
+            Command::Nop => {}
+        }
     }
 
     pub fn draw(&mut self, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface) {

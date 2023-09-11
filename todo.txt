@@ -12,16 +12,19 @@
 - Create a text tool?
 -- How to type without triggering keybindings? Ignore keybindings until esc is pressed?
 
-- Draw Alt mode, draws with the alt color.
+- [x] Draw Alt mode, draws with the alt color. 
 
+- [x] Kinda done
 - Being able to set things to specific values instead of relative.
--- SetColor, SetTool
+-- SetColor, SetTool, kinda done.
+-- Can we remove the usizes? 
 
 - Add integer values to nextcolor, prevcolor, nexttool, prevtool (2t => next tool twice)
 
-- Make it possible to bind thing to the mouse wheel.
+- [?] Make it possible to bind thing to the mouse wheel.
+-- Descrete scrolling not done
 
-- Fix names for mouse buttons. Hard coding mouse button 272 is bad.
+- [x]Fix names for mouse buttons. Hard coding mouse button 272 is bad.
 
 - Fix scale factor
 

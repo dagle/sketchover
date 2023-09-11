@@ -7,7 +7,7 @@ use smithay_client_toolkit::seat::keyboard::Modifiers;
 use crate::{
     draw::DrawKind,
     keymap::KeyMap,
-    mousemap::{Mouse, MouseMap},
+    mousemap::{Mouse, MouseMap, MouseEvent},
 };
 
 #[derive(Parser)]
@@ -17,10 +17,7 @@ pub struct Args {
     #[clap(short, long)]
     size: Option<f32>,
 
-    #[clap(short, long)]
-    color: Option<String>,
-
-    /// Colors in the palette other than the current color
+    /// Colors in the palette, first value will be the starting color
     #[clap(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
     palette: Option<Vec<String>>,
 
@@ -57,16 +54,16 @@ pub struct Args {
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     pub size: f32,
-    pub color: String,
     pub palette: Vec<String>,
     pub distance: bool,
     pub scroll_margine: f64,
     pub foreground: String,
     pub text_color: String,
-    pub starting_tool: DrawKind,
+    pub tools: Vec<DrawKind>,
     pub font: Option<String>,
     pub font_size: f32,
     pub paused: bool,
+    pub scroll_threshold: f64,
     // pub scroll_treshold: f64,
     pub key_map: HashMap<KeyMap, Command>,
     pub mouse_map: HashMap<MouseMap, Command>,
@@ -78,8 +75,10 @@ pub enum Command {
     Undo,
     NextColor,
     PrevColor,
+    SetColor(usize),
     NextTool,
     PrevTool,
+    SetTool(usize),
     ToggleDistance,
     IncreaseSize(f32),
     DecreaseSize(f32),
@@ -88,16 +87,14 @@ pub enum Command {
     Save,
     Combo(Vec<Command>),
     Nop,
-    // draw action
-    DrawStart,
-    // AltDrawStart,
+    DrawStart(usize, usize),
 }
 
 impl Command {
     pub fn draw_command(&self) -> bool {
         // this is a match because there will be multiple commands that can trigger a draw
         match self {
-            Command::DrawStart => true,
+            Command::DrawStart(_, _) => true,
             _ => false,
         }
     }
@@ -133,27 +130,39 @@ impl Default for Config {
             KeyMap::new("m", Modifiers::default()),
             Command::Combo(vec![Command::Clear, Command::IncreaseSize(1.)]),
         );
-        key_map.insert(KeyMap::new("q", Modifiers::default()), Command::DrawStart);
+        key_map.insert(KeyMap::new("q", Modifiers::default()), Command::DrawStart(0,0));
         let mut mouse_map = HashMap::new();
         mouse_map.insert(
-            MouseMap::new(Mouse::Button(1), Modifiers::default()),
-            Command::DrawStart,
+            MouseMap::new(Mouse::Button(MouseEvent::BtnLeft), Modifiers::default()),
+            Command::DrawStart(0,0),
+        );
+        mouse_map.insert(
+            MouseMap::new(Mouse::Button(MouseEvent::BtnRight), Modifiers::default()),
+            Command::DrawStart(0,1),
+        );
+        mouse_map.insert(
+            MouseMap::new(Mouse::ScrollUp, Modifiers::default()),
+            Command::IncreaseSize(0.2),
+        );
+        mouse_map.insert(
+            MouseMap::new(Mouse::ScrollDown, Modifiers::default()),
+            Command::DecreaseSize(0.2),
         );
 
         Config {
             size: 1.,
-            color: String::from("#FF0000FF"),
-            palette: vec!["#00FF00FF".to_owned(), "#0000FFFF".to_owned()],
+            palette: vec!["#FF0000FF".to_owned(),"#00FF00FF".to_owned(), "#0000FFFF".to_owned()],
             distance: false,
             foreground: String::from("#00000000"),
             text_color: String::from("#FFFFFFFF"),
-            starting_tool: DrawKind::Pen,
+            tools: vec![DrawKind::Pen, DrawKind::Line, DrawKind::Rect],
             font: None,
             scroll_margine: 3.0,
             font_size: 12.,
             paused: false,
             key_map,
             mouse_map,
+            scroll_threshold: 5.,
         }
     }
 }
@@ -171,12 +180,11 @@ impl Config {
         let mut cfg: Config = confy::load("sketchover", None)?;
         // TODO: This is beyond horrible but I'm not writing this lib right now
         overwrite!(cfg.size, args.size);
-        overwrite!(cfg.color, args.color);
         overwrite!(cfg.palette, args.palette);
         overwrite!(cfg.distance, args.distance);
         overwrite!(cfg.foreground, args.foreground);
         overwrite!(cfg.text_color, args.text_color);
-        overwrite!(cfg.starting_tool, args.starting_tool);
+        // overwrite!(cfg.starting_tool, args.starting_tool);
         if let Some(font) = args.font {
             cfg.font = Some(font);
         }
@@ -185,5 +193,3 @@ impl Config {
         Ok(cfg)
     }
 }
-
-// let cfg: MyConfig = confy::load("my-app-name", None)?;

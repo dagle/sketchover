@@ -8,17 +8,81 @@ use serde::{
 };
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
+#[derive(Hash, Serialize, Deserialize, Debug)]
+pub enum MouseEvent {
+    BtnLeft,
+    BtnRight,
+    BtnMiddle,
+    BtnSide,
+    BtnExtra,
+    BtnForward,
+    BtnBack,
+    BtnTask,
+    Raw(u32),
+}
+
+impl Into<u32> for &MouseEvent {
+    fn into(self) -> u32 {
+        match self {
+            MouseEvent::BtnLeft => 0x110,
+            MouseEvent::BtnRight => 0x111,
+            MouseEvent::BtnMiddle => 0x112,
+            MouseEvent::BtnSide => 0x113,
+            MouseEvent::BtnExtra => 0x114,
+            MouseEvent::BtnForward => 0x115,
+            MouseEvent::BtnBack => 0x116,
+            MouseEvent::BtnTask => 0x117,
+            MouseEvent::Raw(raw) => *raw,
+        }
+    }
+}
+impl From<u32> for MouseEvent {
+    fn from(value: u32) -> Self {
+        match value {
+            0x110 => MouseEvent::BtnLeft,
+            0x111 => MouseEvent::BtnRight,
+            0x112 => MouseEvent::BtnMiddle,
+            0x113 => MouseEvent::BtnSide,
+            0x114 => MouseEvent::BtnExtra,
+            0x115 => MouseEvent::BtnForward,
+            0x116 => MouseEvent::BtnBack,
+            0x117 => MouseEvent::BtnTask,
+            raw => MouseEvent::Raw(raw),
+        }
+    }
+}
+
+impl PartialEq for MouseEvent {
+    fn eq(&self, other: &Self) -> bool {
+        let r1: u32 = self.into();
+        let r2: u32 = other.into();
+        r1 == r2
+    }
+}
+
+impl Eq for MouseEvent {}
+
 #[derive(Debug)]
 pub struct MouseMap {
     pub event: Mouse,
     pub modifier: Modifiers,
 }
 
+enum ScrollMotion {
+    ScrollUp,
+    ScrollDown,
+    ScrollLeft,
+    ScrollRight,
+}
+
 #[derive(Hash, Serialize, Deserialize, Eq, PartialEq, Debug)]
 pub enum Mouse {
-    HorizontalScroll,
-    VerticalScroll,
-    Button(u32),
+    // DescreteScroll(i32, ScrollMotion)
+    ScrollUp,
+    ScrollDown,
+    ScrollLeft,
+    ScrollRight,
+    Button(MouseEvent),
 }
 
 impl MouseMap {

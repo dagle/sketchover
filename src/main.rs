@@ -89,10 +89,8 @@ fn main() {
     let shm = Shm::bind(&globals, &qh).expect("wl_shm is not available");
 
     let fgcolor = parse_solid(&config.foreground).expect("Couldn't parse foreground color");
-    let draw_color = parse_solid(&config.color).expect("Couldn't parse draw color");
     let mut palette = Vec::new();
 
-    palette.push(draw_color);
     for c in config.palette {
         let color = parse_solid(&c).expect("Couldn't parse palette color");
         palette.push(color);
@@ -140,7 +138,9 @@ fn main() {
         palette,
         palette_index: 0,
         current_style,
-        kind: config.starting_tool,
+        tool_index: 0,
+        tools: config.tools,
+        // kind: config.starting_tool,
         themed_pointer: None,
         current_output: None,
         outputs: Vec::new(),
@@ -181,7 +181,8 @@ struct SketchOver {
     palette_index: usize,
     palette: Vec<raqote::SolidSource>,
     current_output: Option<usize>,
-    kind: DrawKind,
+    tool_index: usize,
+    tools: Vec<DrawKind>,
     modifiers: Modifiers,
     current_style: StrokeStyle,
     themed_pointer: Option<ThemedPointer>,
@@ -539,11 +540,9 @@ impl PointerHandler for SketchOver {
                 }
                 Press { button, .. } => {
                     let mouse_map = MouseMap {
-                        event: Mouse::Button(button - 271),
+                        event: Mouse::Button(button.into()),
                         modifier: self.modifiers,
                     };
-
-                    self.drawing = true;
 
                     let cmd = self.mouse_map.get(&mouse_map).unwrap_or(&Command::Nop);
                     self.command(&cmd.clone());
@@ -551,7 +550,38 @@ impl PointerHandler for SketchOver {
                 Release { .. } => {
                     self.drawing = false;
                 }
-                Axis { .. } => {}
+                Axis { horizontal, vertical, .. } => {
+                    // TODO: handle descrete and contineous differetly
+
+                    // descrete scrolling should should look for a treshold and
+                    // then just wait for a stop.
+                    println!("Horizontal: {:?}\nVertical: {:?}", horizontal, vertical);
+                    let action = if vertical.absolute > 1. {
+                        println!("1");
+                        Mouse::ScrollDown
+                    } else if vertical.absolute < -1. {
+                        println!("2");
+                        Mouse::ScrollUp
+                        // scroll down
+                    } else if horizontal.absolute > 1. {
+                        println!("3");
+                        Mouse::ScrollLeft
+                        // scroll down
+                    } else if horizontal.absolute < -1. {
+                        println!("4");
+                        Mouse::ScrollRight
+                        // scroll down
+                    } else {
+                        println!("bail");
+                        return
+                    };
+                    let mouse_map = MouseMap {
+                        event: action,
+                        modifier: self.modifiers,
+                    };
+                    let cmd = self.mouse_map.get(&mouse_map).unwrap_or(&Command::Nop);
+                    self.command(&cmd.clone());
+                }
             }
         }
     }
@@ -571,7 +601,10 @@ impl SketchOver {
 
     pub fn prev_color(&mut self) {
         let len = self.palette.len();
-        self.palette_index = if self.palette_index == 0 && len > 0 {
+        if len == 0 {
+            return;
+        }
+        self.palette_index = if self.palette_index == 0 {
             len - 1
         } else {
             self.palette_index - 1
@@ -579,20 +612,19 @@ impl SketchOver {
     }
 
     pub fn next_tool(&mut self) {
-        self.kind = match self.kind {
-            DrawKind::Pen => DrawKind::Line,
-            DrawKind::Line => DrawKind::Rect,
-            DrawKind::Rect => DrawKind::Circle,
-            DrawKind::Circle => DrawKind::Pen,
-        };
+        let len = self.tools.len();
+        self.tool_index = (self.tool_index + 1) % len;
     }
 
     pub fn prev_tool(&mut self) {
-        self.kind = match self.kind {
-            DrawKind::Pen => DrawKind::Circle,
-            DrawKind::Line => DrawKind::Pen,
-            DrawKind::Rect => DrawKind::Line,
-            DrawKind::Circle => DrawKind::Rect,
+        let len = self.tools.len();
+        if len == 0 {
+            return;
+        }
+        self.tool_index = if self.tool_index == 0 {
+            len - 1
+        } else {
+            self.tool_index - 1
         };
     }
 
@@ -602,9 +634,7 @@ impl SketchOver {
 
     pub fn decrease_size(&mut self, step: f32) {
         self.current_style.width -= step;
-        if self.current_style.width < 0. {
-            self.current_style.width = 1.;
-        }
+        self.current_style.width = f32::max(self.current_style.width, 1.);
     }
 
     pub fn output(&self, surface: &wl_surface::WlSurface) -> Option<usize> {
@@ -614,6 +644,36 @@ impl SketchOver {
             }
         }
         None
+    }
+
+    pub fn draw_start(&mut self, kind: DrawKind, color: SolidSource) {
+        self.drawing = true;
+
+        let Some(idx) = self.current_output else {
+            log::warn!("No current output found to start drawing");
+            return;
+        };
+
+        let Some(pos) = self.last_pos else {
+            log::warn!("No position recorded to start drawing");
+            return;
+        };
+
+        let output = &mut self.outputs[idx];
+        let action = match kind {
+            DrawKind::Pen => DrawAction::Pen(Vec::new()),
+            DrawKind::Line => DrawAction::Line(pos.0, pos.1),
+            DrawKind::Rect => DrawAction::Rect(5.0, 5.0),
+            DrawKind::Circle => DrawAction::Circle(pos.0 + 10.0, pos.1 + 10.0),
+        };
+        let draw = Draw {
+            start: pos,
+            style: self.current_style.clone(),
+            color,
+            distance: self.distance,
+            action,
+        };
+        output.draws.push(draw);
     }
 
     pub fn command(&mut self, cmd: &Command) {
@@ -632,9 +692,17 @@ impl SketchOver {
             }
             Command::NextColor => self.next_color(),
             Command::PrevColor => self.prev_color(),
+            Command::SetColor(idx) => {
+                self.palette_index = *idx;
+            }
             Command::NextTool => self.next_tool(),
             Command::PrevTool => self.prev_tool(),
-            Command::ToggleDistance => self.prev_tool(),
+            Command::SetTool(idx) => {
+                self.tool_index = *idx;
+            }
+            Command::ToggleDistance => {
+                self.distance = !self.distance;
+            }
             Command::IncreaseSize(step) => self.increase_size(*step),
             Command::DecreaseSize(step) => self.decrease_size(*step),
             Command::TogglePause => {
@@ -663,34 +731,9 @@ impl SketchOver {
             }
             // do nothing
             Command::Nop => {}
-            Command::DrawStart => {
-                self.drawing = true;
-
-                let Some(idx) = self.current_output else {
-                    log::warn!("No current output found to start drawing");
-                    return;
-                };
-
-                let Some(pos) = self.last_pos else {
-                    log::warn!("No position recorded to start drawing");
-                    return;
-                };
-
-                let output = &mut self.outputs[idx];
-                let action = match self.kind {
-                    DrawKind::Pen => DrawAction::Pen(Vec::new()),
-                    DrawKind::Line => DrawAction::Line(pos.0, pos.1),
-                    DrawKind::Rect => DrawAction::Rect(5.0, 5.0),
-                    DrawKind::Circle => DrawAction::Circle(pos.0 + 10.0, pos.1 + 10.0),
-                };
-                let draw = Draw {
-                    start: pos,
-                    style: self.current_style.clone(),
-                    color: self.palette[self.palette_index],
-                    distance: self.distance,
-                    action,
-                };
-                output.draws.push(draw);
+            Command::DrawStart(tidx, cidx) => {
+                self.draw_start(self.tools[(self.tool_index + tidx) % self.tools.len()], 
+                    self.palette[(self.palette_index + cidx) % self.palette.len()]);
             }
         }
     }

@@ -7,6 +7,25 @@
 
 - Add support for mousepointers [when next way of smithway 0.18 is released]
 
-- Convert to the new keybinding system
--- A convert function to convert to a Key + Modifier from String + Vec<String>
--- Do mouse bindings
+- Fix leaving draw mode
+
+- Create a text tool?
+-- How to type without triggering keybindings? Ignore keybindings until esc is pressed?
+
+- Draw Alt mode, draws with the alt color.
+
+- Being able to set things to specific values instead of relative.
+-- SetColor, SetTool
+
+- Add integer values to nextcolor, prevcolor, nexttool, prevtool (2t => next tool twice)
+
+- Make it possible to bind thing to the mouse wheel.
+
+- Fix names for mouse buttons. Hard coding mouse button 272 is bad.
+
+- Fix scale factor
+
+- update_output, is this if we change the resolution? What should we do or should we just 
+  expect the user to rerun?
+
+- When pausing the colors get stronger, doing a partial rendering would fix this

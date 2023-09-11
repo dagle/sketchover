@@ -3,8 +3,10 @@ use std::collections::HashMap;
 use font_kit::source::SystemSource;
 use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
-use sketchover::config::{Args, Command, Config, KeyMap, Mouse, MouseMap};
+use sketchover::config::{Args, Command, Config};
 use sketchover::draw::{Draw, DrawAction, DrawKind};
+use sketchover::keymap::KeyMap;
+use sketchover::mousemap::{Mouse, MouseMap};
 use sketchover::pause::{create_screenshot, ScreenCopy};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
 use smithay_client_toolkit::shm::slot::Buffer;
@@ -148,6 +150,7 @@ fn main() {
         start_paused: config.paused,
         key_map: config.key_map,
         mouse_map: config.mouse_map,
+        last_pos: None,
     };
 
     let ws = WaylandSource::new(event_queue).unwrap();
@@ -169,6 +172,7 @@ struct SketchOver {
 
     exit: LoopSignal,
     drawing: bool,
+    last_pos: Option<(f64, f64)>,
     distance: bool,
     layer_shell: LayerShell,
     keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -203,16 +207,10 @@ pub struct OutPut {
 }
 
 impl OutPut {
-    fn toggle_output(&mut self, conn: &Connection, globals: &GlobalList, shm: &Shm) {
+    fn toggle_screencopy_output(&mut self, conn: &Connection, globals: &GlobalList, shm: &Shm) {
         self.screencopy = match self.screencopy {
             Some(_) => None,
-            None => {
-                let scrcpy = create_screenshot(conn, globals, shm, &self.output);
-                match scrcpy {
-                    Ok(copy) => Some(copy),
-                    Err(_) => None,
-                }
-            }
+            None => create_screenshot(conn, globals, shm, &self.output).ok(),
         }
     }
 }
@@ -298,7 +296,7 @@ impl OutputHandler for SketchOver {
             screencopy: None,
         };
         if self.start_paused {
-            output.toggle_output(&self.conn, &self.globals, &self.shm)
+            output.toggle_screencopy_output(&self.conn, &self.globals, &self.shm)
         }
         self.outputs.push(output);
     }
@@ -321,6 +319,9 @@ impl OutputHandler for SketchOver {
     ) {
         if let Some(index) = self.outputs.iter().position(|o| o.output == output) {
             self.outputs.remove(index);
+            if self.current_output.map(|i| i == index).unwrap_or(false) {
+                self.current_output = None;
+            }
         }
     }
 }
@@ -474,6 +475,9 @@ impl KeyboardHandler for SketchOver {
         _: u32,
         _event: KeyEvent,
     ) {
+        // Is checking that the key isn't a modifier enough?
+        // or should we have save a key that triggered it?
+        self.drawing = false;
     }
 
     fn update_modifiers(
@@ -516,6 +520,7 @@ impl PointerHandler for SketchOver {
                     //     themed_pointer.set_cursor(conn, cursor_icon);
                     // }
                     self.current_output = Some(output);
+                    self.last_pos = Some(event.position);
                 }
                 Leave { .. } => {}
                 Motion { .. } => {
@@ -524,6 +529,7 @@ impl PointerHandler for SketchOver {
                         .iter_mut()
                         .find(|x| x.layer.wl_surface() == &event.surface)
                     {
+                        self.last_pos = Some(event.position);
                         if self.drawing {
                             if let Some(last) = output.draws.last_mut() {
                                 last.add_motion(Some(event.position), &self.modifiers);
@@ -533,45 +539,19 @@ impl PointerHandler for SketchOver {
                 }
                 Press { button, .. } => {
                     let mouse_map = MouseMap {
-                        event: Mouse::Button(button),
+                        event: Mouse::Button(button - 271),
+                        modifier: self.modifiers,
                     };
-
-                    // match self.mouse_map.get(&mouse_map) {
-                    //     Some(_) => todo!(),
-                    //     None => todo!(),
-                    // }
 
                     self.drawing = true;
 
-                    if let Some(output) = self
-                        .outputs
-                        .iter_mut()
-                        .find(|x| x.layer.wl_surface() == &event.surface)
-                    {
-                        let action = match self.kind {
-                            DrawKind::Pen => DrawAction::Pen(Vec::new()),
-                            DrawKind::Line => DrawAction::Line(event.position.0, event.position.1),
-                            DrawKind::Rect => DrawAction::Rect(5.0, 5.0),
-                            DrawKind::Circle => {
-                                DrawAction::Circle(event.position.0 + 10.0, event.position.1 + 10.0)
-                            }
-                        };
-                        let draw = Draw {
-                            start: event.position,
-                            style: self.current_style.clone(),
-                            color: self.palette[self.palette_index],
-                            distance: self.distance,
-                            action,
-                        };
-                        output.draws.push(draw);
-                    }
+                    let cmd = self.mouse_map.get(&mouse_map).unwrap_or(&Command::Nop);
+                    self.command(&cmd.clone());
                 }
                 Release { .. } => {
                     self.drawing = false;
                 }
-                Axis { .. } => {
-                    println!("scroll");
-                }
+                Axis { .. } => {}
             }
         }
     }
@@ -660,7 +640,7 @@ impl SketchOver {
             Command::TogglePause => {
                 if let Some(idx) = self.current_output {
                     let current = self.outputs.get_mut(idx).unwrap();
-                    current.toggle_output(&self.conn, &self.globals, &self.shm);
+                    current.toggle_screencopy_output(&self.conn, &self.globals, &self.shm);
                 }
             }
             Command::Execute(ref cmd) => {
@@ -683,7 +663,35 @@ impl SketchOver {
             }
             // do nothing
             Command::Nop => {}
-            Command::DrawStart => {}
+            Command::DrawStart => {
+                self.drawing = true;
+
+                let Some(idx) = self.current_output else {
+                    log::warn!("No current output found to start drawing");
+                    return;
+                };
+
+                let Some(pos) = self.last_pos else {
+                    log::warn!("No position recorded to start drawing");
+                    return;
+                };
+
+                let output = &mut self.outputs[idx];
+                let action = match self.kind {
+                    DrawKind::Pen => DrawAction::Pen(Vec::new()),
+                    DrawKind::Line => DrawAction::Line(pos.0, pos.1),
+                    DrawKind::Rect => DrawAction::Rect(5.0, 5.0),
+                    DrawKind::Circle => DrawAction::Circle(pos.0 + 10.0, pos.1 + 10.0),
+                };
+                let draw = Draw {
+                    start: pos,
+                    style: self.current_style.clone(),
+                    color: self.palette[self.palette_index],
+                    distance: self.distance,
+                    action,
+                };
+                output.draws.push(draw);
+            }
         }
     }
 

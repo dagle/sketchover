@@ -49,6 +49,10 @@ pub struct Args {
     /// How senisitve should scrolling be
     #[clap(long)]
     pub scroll_treshold: Option<f64>,
+
+    /// Save on exit
+    #[clap(long)]
+    pub save_on_exit: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -64,6 +68,7 @@ pub struct Config {
     pub font_size: f32,
     pub paused: bool,
     pub scroll_threshold: f64,
+    pub save_on_exit: bool,
     // pub scroll_treshold: f64,
     pub key_map: HashMap<KeyMap, Command>,
     pub mouse_map: HashMap<MouseMap, Command>,
@@ -163,6 +168,7 @@ impl Default for Config {
             key_map,
             mouse_map,
             scroll_threshold: 5.,
+            save_on_exit: false,
         }
     }
 }
@@ -184,6 +190,7 @@ impl Config {
         overwrite!(cfg.distance, args.distance);
         overwrite!(cfg.foreground, args.foreground);
         overwrite!(cfg.text_color, args.text_color);
+        overwrite!(cfg.save_on_exit, args.save_on_exit);
         // overwrite!(cfg.starting_tool, args.starting_tool);
         if let Some(font) = args.font {
             cfg.font = Some(font);

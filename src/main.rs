@@ -1,13 +1,16 @@
 use std::collections::HashMap;
+use std::fs::File;
 
 use font_kit::source::SystemSource;
 use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
+use serde::{Serialize, Deserialize};
 use sketchover::config::{Args, Command, Config};
 use sketchover::draw::{Draw, DrawAction, DrawKind};
 use sketchover::keymap::KeyMap;
 use sketchover::mousemap::{Mouse, MouseMap};
 use sketchover::pause::{create_screenshot, ScreenCopy};
+use smithay_client_toolkit::reexports::calloop::signals::{Signals, Signal};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
 use smithay_client_toolkit::shm::slot::Buffer;
 use smithay_client_toolkit::{
@@ -41,6 +44,7 @@ use wayland_client::{
     Connection, QueueHandle,
 };
 
+use directories::BaseDirs;
 use xkbcommon::xkb::keysyms;
 
 use clap::{Parser, ValueEnum};
@@ -81,7 +85,7 @@ fn main() {
 
     let seat_state = SeatState::new(&globals, &qh);
 
-    // We don't need this one atm bu we will the future to set the set the cursor icon
+    // We don't need this one atm but we will the future to set the set the cursor icon
     let compositor_state =
         CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
     let layer_shell = LayerShell::bind(&globals, &qh).expect("Layer shell is not available");
@@ -151,13 +155,23 @@ fn main() {
         key_map: config.key_map,
         mouse_map: config.mouse_map,
         last_pos: None,
+        saved: None,
     };
 
-    let ws = WaylandSource::new(event_queue).unwrap();
+    let ws = WaylandSource::new(event_queue).expect("Unable to connect to Wayland");
 
-    ws.insert(event_loop.handle()).unwrap();
-
-    event_loop.run(None, &mut sketch_over, |_| {}).unwrap();
+    ws.insert(event_loop.handle()).expect("Unable to setup eventloop");
+    event_loop.handle().insert_source(
+        Signals::new(&[Signal::SIGHUP]).unwrap(),
+        move |evt, &mut (), sketch: &mut SketchOver| {
+            if evt.signal() == Signal::SIGHUP {
+                sketch.toggle_passthrough();
+            }
+        },
+    ).expect("Unable to configure signal handler");
+    
+    event_loop.run(None, &mut sketch_over, |_| {
+    }).expect("Eventloop failed")
 }
 
 struct SketchOver {
@@ -168,6 +182,7 @@ struct SketchOver {
     globals: GlobalList,
     shm: Shm,
     outputs: Vec<OutPut>,
+    saved: Option<Vec<Saved>>,
     conn: Connection,
 
     exit: LoopSignal,
@@ -194,6 +209,19 @@ struct SketchOver {
     mouse_map: HashMap<MouseMap, Command>,
 }
 
+pub struct Saved {
+    info: OutputInfo, // used to compare outputs, so we know if we should load an input
+    draws: Vec<Draw>,
+}
+
+impl<'de> Deserialize<'de> for Saved {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de> {
+        todo!()
+    }
+}
+
 pub struct OutPut {
     output: wl_output::WlOutput,
     width: u32,
@@ -201,10 +229,20 @@ pub struct OutPut {
     info: OutputInfo,
     pool: SlotPool,
     buffers: Buffers,
+    interactivity: KeyboardInteractivity, 
     layer: LayerSurface,
     configured: bool,
     draws: Vec<Draw>,
     screencopy: Option<ScreenCopy>,
+}
+
+impl Serialize for OutPut {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        // serialize OutputInfo and draws
+        todo!()
+    }
 }
 
 impl OutPut {
@@ -212,6 +250,15 @@ impl OutPut {
         self.screencopy = match self.screencopy {
             Some(_) => None,
             None => create_screenshot(conn, globals, shm, &self.output).ok(),
+        }
+    }
+    fn toggle_passthrough(&mut self) {
+        if self.interactivity == KeyboardInteractivity::Exclusive {
+            self.interactivity = KeyboardInteractivity::None;
+            self.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        } else {
+            self.interactivity = KeyboardInteractivity::Exclusive;
+            self.layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         }
     }
 }
@@ -273,6 +320,7 @@ impl OutputHandler for SketchOver {
         let height = logical.1 as u32;
 
         layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
+        // TODO: Make it possible to toggle 
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         layer.set_exclusive_zone(-1);
         layer.set_size(width, height);
@@ -295,6 +343,7 @@ impl OutputHandler for SketchOver {
             configured: false,
             draws: Vec::new(),
             screencopy: None,
+            interactivity: KeyboardInteractivity::Exclusive,
         };
         if self.start_paused {
             output.toggle_screencopy_output(&self.conn, &self.globals, &self.shm)
@@ -611,6 +660,12 @@ impl SketchOver {
         };
     }
 
+    pub fn toggle_passthrough(&mut self) {
+        for output in self.outputs.iter_mut() {
+            output.toggle_passthrough();
+        }
+    }
+
     pub fn next_tool(&mut self) {
         let len = self.tools.len();
         self.tool_index = (self.tool_index + 1) % len;
@@ -717,6 +772,15 @@ impl SketchOver {
                 }
             }
             Command::Save => {
+                if let Some(base_dirs) = BaseDirs::new() {
+                    let path = base_dirs.data_dir().join("sketchover_save.json");
+                    if let Ok(file) = File::create(path) {
+                        let _ = serde_json::to_writer(file, "");
+                    } else {
+                        // TODO: LOG the error and fail silently
+                    }
+                }
+
                 // TODO: save output.draws into a file
                 // how to handle multiple outputs? Save info about them
                 // and when we deserilize we check if the outputs match?

@@ -25,3 +25,5 @@ cursor-icon = "1.0.0"
 font-kit = { version = "0.11.0", features = ["freetype", "loader-freetype"] }
 pathfinder_geometry = "0.5"
 serde = { version = "1.0.188", features = ["derive"] }
+directories = "5.0.1"
+serde_json = "1.0.107"

@@ -1,6 +1,6 @@
 use core::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::error;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use smithay_client_toolkit::{
     reexports::protocols_wlr::screencopy::v1::client::{
@@ -15,10 +15,7 @@ use smithay_client_toolkit::{
 use wayland_client::{
     delegate_noop,
     globals::GlobalList,
-    protocol::{
-        wl_output,
-        wl_shm::Format,
-    },
+    protocol::{wl_output, wl_shm::Format},
     Connection, Dispatch, QueueHandle, WEnum,
 };
 
@@ -87,8 +84,7 @@ pub fn create_screenshot(
     let mut event_queue = conn.new_event_queue::<CaptureFrameState>();
     let qh = event_queue.handle();
 
-    let screencopy_manager = globals
-        .bind::<ZwlrScreencopyManagerV1, _, _>(&qh, 3..=3, ())?;
+    let screencopy_manager = globals.bind::<ZwlrScreencopyManagerV1, _, _>(&qh, 3..=3, ())?;
 
     // Capture output, but we don't want the cursor
     let frame: ZwlrScreencopyFrameV1 = screencopy_manager.capture_output(0, output, &qh, ());
@@ -106,13 +102,12 @@ pub fn create_screenshot(
 
     let mut pool = SlotPool::new(format.height as usize * format.stride as usize, shm)?;
 
-    let (buffer, canvas) = pool
-        .create_buffer(
-            format.width as i32,
-            format.height as i32,
-            format.stride as i32,
-            format.format,
-        )?;
+    let (buffer, canvas) = pool.create_buffer(
+        format.width as i32,
+        format.height as i32,
+        format.stride as i32,
+        format.format,
+    )?;
 
     frame.copy(buffer.wl_buffer());
     loop {
@@ -125,8 +120,7 @@ pub fn create_screenshot(
                 FrameState::Finished => {
                     log::info!("Screencopy frame copied");
                     match format.format {
-                        Format::Argb8888 => {
-                        }
+                        Format::Argb8888 => {}
                         Format::Xbgr8888 => {
                             log::info!("Screencopy frame converted from Xbgr8888 to Argb8888");
                             for chunk in canvas.chunks_exact_mut(4) {
@@ -176,8 +170,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureFrameState {
                     })
                 }
             }
-            zwlr_screencopy_frame_v1::Event::Flags { flags: _ } => {
-            }
+            zwlr_screencopy_frame_v1::Event::Flags { flags: _ } => {}
             zwlr_screencopy_frame_v1::Event::Ready {
                 tv_sec_hi: _,
                 tv_sec_lo: _,
@@ -201,8 +194,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureFrameState {
                 format: _,
                 width: _,
                 height: _,
-            } => {
-            }
+            } => {}
             zwlr_screencopy_frame_v1::Event::BufferDone => {
                 log::info!("Screencopy buffer was done copying");
                 frame.buffer_done.store(true, Ordering::SeqCst);
@@ -211,6 +203,5 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureFrameState {
         }
     }
 }
-
 
 delegate_noop!(CaptureFrameState: ignore ZwlrScreencopyManagerV1);

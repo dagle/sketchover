@@ -550,7 +550,11 @@ impl PointerHandler for SketchOver {
                 Release { .. } => {
                     self.drawing = false;
                 }
-                Axis { horizontal, vertical, .. } => {
+                Axis {
+                    horizontal,
+                    vertical,
+                    ..
+                } => {
                     // TODO: handle descrete and contineous differetly
 
                     // descrete scrolling should should look for a treshold and
@@ -573,7 +577,7 @@ impl PointerHandler for SketchOver {
                         // scroll down
                     } else {
                         println!("bail");
-                        return
+                        return;
                     };
                     let mouse_map = MouseMap {
                         event: action,
@@ -732,8 +736,10 @@ impl SketchOver {
             // do nothing
             Command::Nop => {}
             Command::DrawStart(tidx, cidx) => {
-                self.draw_start(self.tools[(self.tool_index + tidx) % self.tools.len()], 
-                    self.palette[(self.palette_index + cidx) % self.palette.len()]);
+                self.draw_start(
+                    self.tools[(self.tool_index + tidx) % self.tools.len()],
+                    self.palette[(self.palette_index + cidx) % self.palette.len()],
+                );
             }
         }
     }

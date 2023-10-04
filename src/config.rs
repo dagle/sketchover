@@ -7,7 +7,7 @@ use smithay_client_toolkit::seat::keyboard::Modifiers;
 use crate::{
     draw::DrawKind,
     keymap::KeyMap,
-    mousemap::{Mouse, MouseMap, MouseEvent},
+    mousemap::{Mouse, MouseEvent, MouseMap},
 };
 
 #[derive(Parser)]
@@ -130,15 +130,18 @@ impl Default for Config {
             KeyMap::new("m", Modifiers::default()),
             Command::Combo(vec![Command::Clear, Command::IncreaseSize(1.)]),
         );
-        key_map.insert(KeyMap::new("q", Modifiers::default()), Command::DrawStart(0,0));
+        key_map.insert(
+            KeyMap::new("q", Modifiers::default()),
+            Command::DrawStart(0, 0),
+        );
         let mut mouse_map = HashMap::new();
         mouse_map.insert(
             MouseMap::new(Mouse::Button(MouseEvent::BtnLeft), Modifiers::default()),
-            Command::DrawStart(0,0),
+            Command::DrawStart(0, 0),
         );
         mouse_map.insert(
             MouseMap::new(Mouse::Button(MouseEvent::BtnRight), Modifiers::default()),
-            Command::DrawStart(0,1),
+            Command::DrawStart(0, 1),
         );
         mouse_map.insert(
             MouseMap::new(Mouse::ScrollUp, Modifiers::default()),
@@ -148,10 +151,22 @@ impl Default for Config {
             MouseMap::new(Mouse::ScrollDown, Modifiers::default()),
             Command::DecreaseSize(0.2),
         );
+        mouse_map.insert(
+            MouseMap::new(Mouse::Button(MouseEvent::BtnSide), Modifiers::default()),
+            Command::PrevTool,
+        );
+        mouse_map.insert(
+            MouseMap::new(Mouse::Button(MouseEvent::BtnExtra), Modifiers::default()),
+            Command::NextTool,
+        );
 
         Config {
             size: 1.,
-            palette: vec!["#FF0000FF".to_owned(),"#00FF00FF".to_owned(), "#0000FFFF".to_owned()],
+            palette: vec![
+                "#FF0000FF".to_owned(),
+                "#00FF00FF".to_owned(),
+                "#0000FFFF".to_owned(),
+            ],
             distance: false,
             foreground: String::from("#00000000"),
             text_color: String::from("#FFFFFFFF"),

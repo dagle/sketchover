@@ -559,24 +559,18 @@ impl PointerHandler for SketchOver {
 
                     // descrete scrolling should should look for a treshold and
                     // then just wait for a stop.
-                    println!("Horizontal: {:?}\nVertical: {:?}", horizontal, vertical);
                     let action = if vertical.absolute > 1. {
-                        println!("1");
                         Mouse::ScrollDown
                     } else if vertical.absolute < -1. {
-                        println!("2");
                         Mouse::ScrollUp
                         // scroll down
                     } else if horizontal.absolute > 1. {
-                        println!("3");
                         Mouse::ScrollLeft
                         // scroll down
                     } else if horizontal.absolute < -1. {
-                        println!("4");
                         Mouse::ScrollRight
                         // scroll down
                     } else {
-                        println!("bail");
                         return;
                     };
                     let mouse_map = MouseMap {

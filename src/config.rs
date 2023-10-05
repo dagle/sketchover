@@ -139,6 +139,11 @@ impl Default for Config {
             KeyMap::new("q", Modifiers::default()),
             Command::DrawStart(0, 0),
         );
+        key_map.insert(
+            KeyMap::new("s", Modifiers::default()),
+            Command::Save,
+        );
+
         let mut mouse_map = HashMap::new();
         mouse_map.insert(
             MouseMap::new(Mouse::Button(MouseEvent::BtnLeft), Modifiers::default()),

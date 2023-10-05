@@ -1,7 +1,10 @@
+use core::fmt;
+
 use clap::ValueEnum;
 use font_kit::font::Font;
-use raqote::{DrawOptions, DrawTarget, Point, Source, StrokeStyle};
-use serde::{Deserialize, Serialize};
+use hex_color::{HexColor, ParseHexColorError};
+use raqote::{DrawOptions, DrawTarget, Point, Source, StrokeStyle, LineCap, LineJoin, SolidSource};
+use serde::{Deserialize, Serialize, ser::SerializeStruct, de::{Visitor, SeqAccess, self, MapAccess}};
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 mod fk {
@@ -19,19 +22,342 @@ pub struct Draw {
     pub action: DrawAction,
 }
 
+// https://serde.rs/remote-derive.html
+#[derive(Clone, PartialEq, Debug)]
+pub struct StrokeStyleSerialize {
+    pub width: f32,
+    pub cap: LineCap,
+    pub join: LineJoin,
+    pub miter_limit: f32,
+    pub dash_array: Vec<f32>,
+    pub dash_offset: f32,
+}
+
+impl Serialize for StrokeStyleSerialize {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        let mut state = serializer.serialize_struct("Draw", 6)?;
+        state.serialize_field("width", &self.width)?;
+        match self.cap {
+            LineCap::Round => state.serialize_field("cap", "round")?,
+            LineCap::Square => state.serialize_field("cap", "square")?,
+            LineCap::Butt => state.serialize_field("cap", "butt")?,
+        }
+        match self.join {
+            LineJoin::Round => state.serialize_field("join", "round")?,
+            LineJoin::Miter => state.serialize_field("join", "miter")?,
+            LineJoin::Bevel => state.serialize_field("join", "bevel")?,
+        }
+        state.serialize_field("miter_limit", &self.miter_limit)?;
+        state.serialize_field("dash_array", &self.dash_array)?;
+        state.serialize_field("dash_offset", &self.dash_offset)?;
+        state.end()
+    }
+}
+
+fn read_cap(str: &str) -> Result<LineCap, String> {
+    match str {
+        "round" => Ok(LineCap::Round),
+        "square" => Ok(LineCap::Square),
+        "butt" => Ok(LineCap::Butt),
+        x => return Err(format!("{x} is not a cap")),
+    }
+}
+fn read_join(str: &str) -> Result<LineJoin, String> {
+    // de::Error::invalid_value(unexp, exp)
+    match str {
+        "round" => Ok(LineJoin::Round),
+        "milter" => Ok(LineJoin::Miter),
+        "bevel" => Ok(LineJoin::Bevel),
+        x => return Err(format!("{x} is not a join")),
+    }
+}
+
+impl<'de> Deserialize<'de> for StrokeStyleSerialize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de> {
+
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field {
+            Width,
+            Cap,
+            Join,
+            Miter_limit,
+            Dash_array,
+            Dash_offset,
+        }
+
+        struct StyleVisitor;
+
+        impl<'de> Visitor<'de> for StyleVisitor {
+            type Value = StrokeStyleSerialize;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct Draw")
+            }
+
+            fn visit_seq<V>(self, mut seq: V) -> Result<StrokeStyleSerialize, V::Error>
+            where
+                V: SeqAccess<'de>,
+            {
+                let width = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                let cap_str: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                let cap = read_cap(&cap_str).map_err(de::Error::custom)?;
+
+                let join_str: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(2, &self))?;
+                let join = read_join(&join_str).map_err(de::Error::custom)?;
+
+                let miter_limit = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(3, &self))?;
+                let dash_array = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(4, &self))?;
+                let dash_offset = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(5, &self))?;
+
+                Ok(StrokeStyleSerialize {
+                    width, cap, join, miter_limit, dash_array, dash_offset
+                })
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<StrokeStyleSerialize, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut width = None;
+                let mut cap = None;
+                let mut join = None;
+                let mut miter_limit = None;
+                let mut dash_array = None;
+                let mut dash_offset = None;
+                while let Some(f) = map.next_key()? {
+                    match f {
+                        Field::Width => {
+                            if width.is_some() {
+                                return Err(de::Error::duplicate_field("start"));
+                            }
+                            width = Some(map.next_value()?);
+                        }
+                        Field::Cap => {
+                            if width.is_some() {
+                                return Err(de::Error::duplicate_field("start"));
+                            }
+                            let cap_str: String = map.next_value()?;
+                            cap = Some(read_cap(&cap_str).map_err(de::Error::custom)?);
+                        }
+                        Field::Join => {
+                            if width.is_some() {
+                                return Err(de::Error::duplicate_field("start"));
+                            }
+                            let join_str: String = map.next_value()?;
+                            join = Some(read_join(&join_str).map_err(de::Error::custom)?);
+                        }
+                        Field::Miter_limit => {
+                            if width.is_some() {
+                                return Err(de::Error::duplicate_field("start"));
+                            }
+                            miter_limit = Some(map.next_value()?);
+                        }
+                        Field::Dash_array => {
+                            if width.is_some() {
+                                return Err(de::Error::duplicate_field("start"));
+                            }
+                            dash_array = Some(map.next_value()?);
+                        }
+                        Field::Dash_offset => {
+                            if width.is_some() {
+                                return Err(de::Error::duplicate_field("start"));
+                            }
+                            dash_offset = Some(map.next_value()?);
+                        }
+                    }
+                }
+                // let start = start.ok_or_else(|| de::Error::missing_field("key"))?;
+                let width = width.ok_or_else(|| de::Error::missing_field("width"))?;
+                let cap = cap.ok_or_else(|| de::Error::missing_field("cap"))?;
+                let join = join.ok_or_else(|| de::Error::missing_field("join"))?;
+                let miter_limit = miter_limit.ok_or_else(|| de::Error::missing_field("miter_limit"))?;
+                let dash_array = dash_array.ok_or_else(|| de::Error::missing_field("dash_array"))?;
+                let dash_offset = dash_offset.ok_or_else(|| de::Error::missing_field("dash_offset"))?;
+                Ok(StrokeStyleSerialize {
+                    width, cap, join, miter_limit, dash_array, dash_offset
+                })
+            }
+        }
+        const FIELDS: &'static [&'static str] = &["width", "cap", "join", "miter_limit", "dash_array", "dash_offset"];
+        deserializer.deserialize_struct("StrokeStyle", FIELDS, StyleVisitor)
+    }
+}
+
+impl From<&StrokeStyle> for StrokeStyleSerialize {
+    fn from(value: &StrokeStyle) -> Self {
+        StrokeStyleSerialize {
+            width: value.width,
+            cap: value.cap,
+            join: value.join,
+            miter_limit: value.miter_limit,
+            dash_array: value.dash_array.clone(),
+            dash_offset: value.dash_offset,
+        }
+    }
+}
+
+impl Into<StrokeStyle> for StrokeStyleSerialize {
+    fn into(self) -> StrokeStyle {
+        StrokeStyle { 
+            width: self.width, 
+            cap: self.cap,
+            join: self.join,
+            miter_limit: self.miter_limit,
+            dash_array: self.dash_array,
+            dash_offset: self.dash_offset, 
+        }
+    }
+}
+
+
 impl Serialize for Draw {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer {
-        todo!()
+        let mut state = serializer.serialize_struct("Draw", 5)?;
+        state.serialize_field("start", &self.start)?;
+        let style: StrokeStyleSerialize = (&self.style).into();
+        state.serialize_field("style", &style)?;
+        let colorstr = format!("#{:02x}{:02x}{:02x}{:02x}", 
+            self.color.r, self.color.g, self.color.b, self.color.a);
+        state.serialize_field("color", &colorstr)?;
+        state.serialize_field("distance", &self.distance)?;
+        state.serialize_field("action", &self.action)?;
+        state.end()
     }
+}
+
+// TODO: remove dedup this
+fn parse_solid(str: &str) -> Result<SolidSource, ParseHexColorError> {
+    let hex = HexColor::parse(str)?;
+    Ok(SolidSource {
+        r: hex.r,
+        g: hex.g,
+        b: hex.b,
+        a: hex.a,
+    })
 }
 
 impl<'de> Deserialize<'de> for Draw {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de> {
-        todo!()
+
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field {
+            Start,
+            Style,
+            Color,
+            Distance,
+            Action,
+        }
+
+        struct DrawVisitor;
+
+        impl<'de> Visitor<'de> for DrawVisitor {
+            type Value = Draw;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct Draw")
+            }
+
+            fn visit_seq<V>(self, mut seq: V) -> Result<Draw, V::Error>
+            where
+                V: SeqAccess<'de>,
+            {
+                let start = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                let style: StrokeStyleSerialize = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                let color_str: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(3, &self))?;
+                let distance= seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(4, &self))?;
+                let action = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(5, &self))?;
+                let color = parse_solid(&color_str).map_err(de::Error::custom)?;
+
+                Ok(Draw { start, style: style.into(), color, distance, action })
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Draw, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut start = None;
+                let mut style: Option<StrokeStyleSerialize> = None;
+                let mut color = None;
+                let mut distance = None;
+                let mut action = None;
+                while let Some(f) = map.next_key()? {
+                    match f {
+                        Field::Start => {
+                            if start.is_some() {
+                                return Err(de::Error::duplicate_field("start"));
+                            }
+                            start = Some(map.next_value()?);
+                        }
+                        Field::Style => {
+                            if start.is_some() {
+                                return Err(de::Error::duplicate_field("style"));
+                            }
+                            style = Some(map.next_value()?);
+                        }
+                        Field::Color => {
+                            if start.is_some() {
+                                return Err(de::Error::duplicate_field("color"));
+                            }
+                            let color_str: String = map.next_value()?;
+                            color = Some(parse_solid(&color_str).map_err(de::Error::custom)?);
+                        }
+                        Field::Distance => {
+                            if start.is_some() {
+                                return Err(de::Error::duplicate_field("distance"));
+                            }
+                            distance = Some(map.next_value()?);
+                        }
+                        Field::Action => {
+                            if start.is_some() {
+                                return Err(de::Error::duplicate_field("action"));
+                            }
+                            action = Some(map.next_value()?);
+                        }
+                    }
+                }
+                let start = start.ok_or_else(|| de::Error::missing_field("start"))?;
+                let style = style.ok_or_else(|| de::Error::missing_field("style"))?;
+                let color = color.ok_or_else(|| de::Error::missing_field("color"))?;
+                let distance = distance.ok_or_else(|| de::Error::missing_field("distance"))?;
+                let action = action.ok_or_else(|| de::Error::missing_field("action"))?;
+                Ok(Draw { start, style: style.into(), color, distance, action })
+            }
+        }
+
+        const FIELDS: &'static [&'static str] = &["start", "style", "color", "distance", "action"];
+        deserializer.deserialize_struct("Draw", FIELDS, DrawVisitor)
     }
 }
 

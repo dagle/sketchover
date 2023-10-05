@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::fs::File;
+use std::path::PathBuf;
 
 use font_kit::source::SystemSource;
 use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
+use serde::ser::SerializeStruct;
 use serde::{Serialize, Deserialize};
 use sketchover::config::{Args, Command, Config};
 use sketchover::draw::{Draw, DrawAction, DrawKind};
@@ -67,6 +69,11 @@ fn parse_solid(str: &str) -> Result<SolidSource, ParseHexColorError> {
     })
 }
 
+fn save_path() -> Option<PathBuf> {
+    let base_dirs = BaseDirs::new()?;
+    Some(base_dirs.data_dir().join("sketchover_save.json"))
+}
+
 fn main() {
     env_logger::init();
     let args = Args::parse();
@@ -100,6 +107,8 @@ fn main() {
         palette.push(color);
     }
 
+    let saved: Option<Vec<Saved>> = save_path().map(|p| File::open(p).ok().map(|f| serde_json::from_reader(f).expect("Couldn't parse saved file"))).flatten();
+
     let font = match config.font {
         Some(name) => SystemSource::new().select_by_postscript_name(&name),
         None => SystemSource::new().select_best_match(
@@ -121,6 +130,8 @@ fn main() {
     };
 
     let mut event_loop = EventLoop::try_new().expect("couldn't create event-loop");
+
+
 
     let mut sketch_over = SketchOver {
         registry_state,
@@ -155,7 +166,7 @@ fn main() {
         key_map: config.key_map,
         mouse_map: config.mouse_map,
         last_pos: None,
-        saved: None,
+        saved,
     };
 
     let ws = WaylandSource::new(event_queue).expect("Unable to connect to Wayland");
@@ -209,17 +220,25 @@ struct SketchOver {
     mouse_map: HashMap<MouseMap, Command>,
 }
 
-pub struct Saved {
-    info: OutputInfo, // used to compare outputs, so we know if we should load an input
-    draws: Vec<Draw>,
+fn restore(saved: &mut Vec<Saved>, info: &OutputInfo) -> Vec<Draw> {
+    let index = saved.iter().position(|s| {
+        s.id == info.id &&
+        s.model == info.model &&
+        s.make == info.make
+    });
+    if let Some(index) = index {
+        saved.remove(index).draws
+    } else {
+        Vec::new()
+    }
 }
 
-impl<'de> Deserialize<'de> for Saved {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de> {
-        todo!()
-    }
+#[derive(Deserialize)]
+pub struct Saved {
+    id: u32, // We use these 3 values to compare outputs, so we know if we should load an input
+    model: String,
+    make: String,
+    draws: Vec<Draw>,
 }
 
 pub struct OutPut {
@@ -240,8 +259,12 @@ impl Serialize for OutPut {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer {
-        // serialize OutputInfo and draws
-        todo!()
+        let mut state = serializer.serialize_struct("Saved", 4)?;
+        state.serialize_field("id", &self.info.id)?;
+        state.serialize_field("model", &self.info.model)?;
+        state.serialize_field("make", &self.info.make)?;
+        state.serialize_field("draws", &self.draws)?;
+        state.end()
     }
 }
 
@@ -332,6 +355,12 @@ impl OutputHandler for SketchOver {
 
         let buffers = Buffers::new(&mut pool, width, height, wl_shm::Format::Argb8888);
 
+        let draws = if let Some(ref mut saved) = self.saved {
+            restore(saved, &info)
+        } else {
+            Vec::new()
+        };
+
         let mut output = OutPut {
             output,
             width,
@@ -341,7 +370,7 @@ impl OutputHandler for SketchOver {
             layer,
             buffers,
             configured: false,
-            draws: Vec::new(),
+            draws,
             screencopy: None,
             interactivity: KeyboardInteractivity::Exclusive,
         };
@@ -612,13 +641,10 @@ impl PointerHandler for SketchOver {
                         Mouse::ScrollDown
                     } else if vertical.absolute < -1. {
                         Mouse::ScrollUp
-                        // scroll down
                     } else if horizontal.absolute > 1. {
                         Mouse::ScrollLeft
-                        // scroll down
                     } else if horizontal.absolute < -1. {
                         Mouse::ScrollRight
-                        // scroll down
                     } else {
                         return;
                     };
@@ -770,10 +796,9 @@ impl SketchOver {
                 }
             }
             Command::Save => {
-                if let Some(base_dirs) = BaseDirs::new() {
-                    let path = base_dirs.data_dir().join("sketchover_save.json");
+                if let Some(path) = save_path() {
                     if let Ok(file) = File::create(path) {
-                        let _ = serde_json::to_writer(file, "");
+                        let _ = serde_json::to_writer(file, &self.outputs);
                     } else {
                         // TODO: LOG the error and fail silently
                     }

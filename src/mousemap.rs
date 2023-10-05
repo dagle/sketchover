@@ -200,8 +200,8 @@ impl<'de> Deserialize<'de> for MouseMap {
             }
         }
 
-        const FIELDS: &'static [&'static str] = &["key", "modifier"];
-        deserializer.deserialize_struct("Duration", FIELDS, KeyMapVisitor)
+        const FIELDS: &'static [&'static str] = &["mouse", "modifier"];
+        deserializer.deserialize_struct("MouseMap", FIELDS, KeyMapVisitor)
     }
 }
 

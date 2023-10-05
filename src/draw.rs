@@ -22,7 +22,6 @@ pub struct Draw {
     pub action: DrawAction,
 }
 
-// https://serde.rs/remote-derive.html
 #[derive(Clone, PartialEq, Debug)]
 pub struct StrokeStyleSerialize {
     pub width: f32,

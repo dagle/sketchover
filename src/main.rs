@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::fs::File;
+use std::error;
+use std::fs::{File, self};
 use std::path::PathBuf;
 
 use font_kit::source::SystemSource;
@@ -107,7 +108,12 @@ fn main() {
         palette.push(color);
     }
 
-    let saved: Option<Vec<Saved>> = save_path().map(|p| File::open(p).ok().map(|f| serde_json::from_reader(f).expect("Couldn't parse saved file"))).flatten();
+    let savepath = save_path();
+    let saved: Option<Vec<Saved>> = savepath.as_ref().map(|p| File::open(p).ok().map(|f| serde_json::from_reader(f).expect("Couldn't parse saved file"))).flatten();
+
+    if saved.is_some() && config.delete_save_on_resume {
+        fs::remove_file(savepath.unwrap()).expect("Couldn't remove save file after loading it")
+    }
 
     let font = match config.font {
         Some(name) => SystemSource::new().select_by_postscript_name(&name),
@@ -130,8 +136,6 @@ fn main() {
     };
 
     let mut event_loop = EventLoop::try_new().expect("couldn't create event-loop");
-
-
 
     let mut sketch_over = SketchOver {
         registry_state,
@@ -167,6 +171,7 @@ fn main() {
         mouse_map: config.mouse_map,
         last_pos: None,
         saved,
+        save_on_exit: config.save_on_exit,
     };
 
     let ws = WaylandSource::new(event_queue).expect("Unable to connect to Wayland");
@@ -218,6 +223,7 @@ struct SketchOver {
     start_paused: bool,
     key_map: HashMap<KeyMap, Command>,
     mouse_map: HashMap<MouseMap, Command>,
+    save_on_exit: bool,
 }
 
 fn restore(saved: &mut Vec<Saved>, info: &OutputInfo) -> Vec<Draw> {
@@ -329,13 +335,13 @@ impl OutputHandler for SketchOver {
 
         let Some(info) = self.output_state.info(&output) else {
             log::error!("Can't get screen info for new output");
-            self.exit.stop();
+            self.exit();
             return;
         };
 
         let Some(logical) = info.logical_size else {
             log::error!("Can't get logical info info for new output");
-            self.exit.stop();
+            self.exit();
             return;
         };
 
@@ -407,7 +413,7 @@ impl OutputHandler for SketchOver {
 
 impl LayerShellHandler for SketchOver {
     fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
-        self.exit.stop();
+        self.exit();
     }
 
     fn configure(
@@ -534,7 +540,7 @@ impl KeyboardHandler for SketchOver {
     ) {
         // Esc is hardcoded
         if event.keysym == keysyms::KEY_Escape {
-            self.exit.stop();
+            self.exit();
             return;
         }
 
@@ -667,6 +673,21 @@ impl ShmHandler for SketchOver {
 }
 
 impl SketchOver {
+    pub fn exit(&self) {
+        if self.save_on_exit {
+            let _ = self.save();
+        }
+        self.exit.stop();
+    }
+
+    pub fn save(&self) -> Result<(), Box<dyn error::Error>> {
+        if let Some(path) = save_path() {
+            let file = File::create(path)?;
+            serde_json::to_writer(file, &self.outputs)?;
+        }
+        Ok(())
+    }
+
     pub fn next_color(&mut self) {
         let len = self.palette.len();
         self.palette_index = (self.palette_index + 1) % len;
@@ -796,20 +817,7 @@ impl SketchOver {
                 }
             }
             Command::Save => {
-                if let Some(path) = save_path() {
-                    if let Ok(file) = File::create(path) {
-                        let _ = serde_json::to_writer(file, &self.outputs);
-                    } else {
-                        // TODO: LOG the error and fail silently
-                    }
-                }
-
-                // TODO: save output.draws into a file
-                // how to handle multiple outputs? Save info about them
-                // and when we deserilize we check if the outputs match?
-
-                // How to resume? Since the output isn't created at startup but
-                // rather in a callback. How would one resume this?
+                let _ = self.save();
             }
             Command::Combo(cmds) => {
                 for cmd in cmds {

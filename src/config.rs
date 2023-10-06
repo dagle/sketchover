@@ -53,6 +53,10 @@ pub struct Args {
     /// Save on exit
     #[clap(long)]
     pub save_on_exit: Option<bool>,
+
+    /// Delete the save file after resuming
+    #[clap(long)]
+    pub delete_save_on_resume: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -69,6 +73,7 @@ pub struct Config {
     pub paused: bool,
     pub scroll_threshold: f64,
     pub save_on_exit: bool,
+    pub delete_save_on_resume: bool,
     // pub scroll_treshold: f64,
     pub key_map: HashMap<KeyMap, Command>,
     pub mouse_map: HashMap<MouseMap, Command>,
@@ -189,6 +194,7 @@ impl Default for Config {
             mouse_map,
             scroll_threshold: 5.,
             save_on_exit: false,
+            delete_save_on_resume: true,
         }
     }
 }
@@ -211,6 +217,7 @@ impl Config {
         overwrite!(cfg.foreground, args.foreground);
         overwrite!(cfg.text_color, args.text_color);
         overwrite!(cfg.save_on_exit, args.save_on_exit);
+        overwrite!(cfg.delete_save_on_resume, args.delete_save_on_resume);
         // overwrite!(cfg.starting_tool, args.starting_tool);
         if let Some(font) = args.font {
             cfg.font = Some(font);

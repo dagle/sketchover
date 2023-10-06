@@ -64,10 +64,9 @@ fn read_cap(str: &str) -> Result<LineCap, String> {
     }
 }
 fn read_join(str: &str) -> Result<LineJoin, String> {
-    // de::Error::invalid_value(unexp, exp)
     match str {
         "round" => Ok(LineJoin::Round),
-        "milter" => Ok(LineJoin::Miter),
+        "miter" => Ok(LineJoin::Miter),
         "bevel" => Ok(LineJoin::Bevel),
         x => return Err(format!("{x} is not a join")),
     }
@@ -144,39 +143,39 @@ impl<'de> Deserialize<'de> for StrokeStyleSerialize {
                     match f {
                         Field::Width => {
                             if width.is_some() {
-                                return Err(de::Error::duplicate_field("start"));
+                                return Err(de::Error::duplicate_field("width"));
                             }
                             width = Some(map.next_value()?);
                         }
                         Field::Cap => {
-                            if width.is_some() {
-                                return Err(de::Error::duplicate_field("start"));
+                            if cap.is_some() {
+                                return Err(de::Error::duplicate_field("cap"));
                             }
                             let cap_str: String = map.next_value()?;
                             cap = Some(read_cap(&cap_str).map_err(de::Error::custom)?);
                         }
                         Field::Join => {
-                            if width.is_some() {
-                                return Err(de::Error::duplicate_field("start"));
+                            if join.is_some() {
+                                return Err(de::Error::duplicate_field("join"));
                             }
                             let join_str: String = map.next_value()?;
                             join = Some(read_join(&join_str).map_err(de::Error::custom)?);
                         }
                         Field::Miter_limit => {
-                            if width.is_some() {
-                                return Err(de::Error::duplicate_field("start"));
+                            if miter_limit.is_some() {
+                                return Err(de::Error::duplicate_field("miter_limit"));
                             }
                             miter_limit = Some(map.next_value()?);
                         }
                         Field::Dash_array => {
-                            if width.is_some() {
-                                return Err(de::Error::duplicate_field("start"));
+                            if dash_array.is_some() {
+                                return Err(de::Error::duplicate_field("dash_array"));
                             }
                             dash_array = Some(map.next_value()?);
                         }
                         Field::Dash_offset => {
-                            if width.is_some() {
-                                return Err(de::Error::duplicate_field("start"));
+                            if dash_offset.is_some() {
+                                return Err(de::Error::duplicate_field("dash_offset"));
                             }
                             dash_offset = Some(map.next_value()?);
                         }
@@ -320,26 +319,26 @@ impl<'de> Deserialize<'de> for Draw {
                             start = Some(map.next_value()?);
                         }
                         Field::Style => {
-                            if start.is_some() {
+                            if style.is_some() {
                                 return Err(de::Error::duplicate_field("style"));
                             }
                             style = Some(map.next_value()?);
                         }
                         Field::Color => {
-                            if start.is_some() {
+                            if color.is_some() {
                                 return Err(de::Error::duplicate_field("color"));
                             }
                             let color_str: String = map.next_value()?;
                             color = Some(parse_solid(&color_str).map_err(de::Error::custom)?);
                         }
                         Field::Distance => {
-                            if start.is_some() {
+                            if distance.is_some() {
                                 return Err(de::Error::duplicate_field("distance"));
                             }
                             distance = Some(map.next_value()?);
                         }
                         Field::Action => {
-                            if start.is_some() {
+                            if action.is_some() {
                                 return Err(de::Error::duplicate_field("action"));
                             }
                             action = Some(map.next_value()?);
@@ -525,3 +524,55 @@ pub fn draw_text(
     }
     dt.draw_glyphs(font, point_size, &ids, &positions, src, options);
 }
+
+#[cfg(test)]
+mod tests {
+    use raqote::{StrokeStyle, LineJoin, LineCap, SolidSource};
+
+    use super::{Draw, DrawAction, StrokeStyleSerialize};
+
+    #[test]
+    fn draw_serialize_deserialize() {
+        let style = StrokeStyle {
+                width: 3.0,
+                cap: LineCap::Round,
+                join: LineJoin::Round,
+                miter_limit: 0.0,
+                dash_array: Vec::new(),
+                dash_offset: 0.0
+            };
+        let pre = Draw {
+            start: (0.0, 0.0),
+            style: style,
+            color: SolidSource {
+                r: 200,
+                g: 140,
+                b: 80,
+                a: 0,
+            },
+            distance: false,
+            action: DrawAction::Pen(
+                vec![(23.0, 48.0), (48.0, 93.9)]
+            )
+        };
+        let j = serde_json::to_string(&pre).unwrap();
+        println!("{}", j);
+        let post: Draw = serde_json::from_str(&j).unwrap();
+    }
+
+    #[test]
+    fn stroke_serialize_deserialize() {
+        let pre = StrokeStyleSerialize {
+                width: 3.0,
+                cap: LineCap::Round,
+                join: LineJoin::Miter,
+                miter_limit: 0.0,
+                dash_array: Vec::new(),
+                dash_offset: 0.0
+            };
+        let j = serde_json::to_string(&pre).unwrap();
+        println!("{}", j);
+        let post: StrokeStyleSerialize = serde_json::from_str(&j).unwrap();
+    }
+}
+

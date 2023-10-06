@@ -14,7 +14,9 @@ mod fk {
     pub use pathfinder_geometry::vector::{vec2f, vec2i};
 }
 
+#[derive(Clone, PartialEq, Debug)]
 pub struct Draw {
+    // TODO:remove this?
     pub start: (f64, f64),
     pub style: StrokeStyle,
     pub color: raqote::SolidSource,
@@ -242,8 +244,7 @@ impl Serialize for Draw {
     }
 }
 
-// TODO: remove dedup this
-fn parse_solid(str: &str) -> Result<SolidSource, ParseHexColorError> {
+pub fn parse_solid(str: &str) -> Result<SolidSource, ParseHexColorError> {
     let hex = HexColor::parse(str)?;
     Ok(SolidSource {
         r: hex.r,
@@ -367,7 +368,7 @@ pub enum DrawKind {
     Circle,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum DrawAction {
     Pen(Vec<(f64, f64)>),
     Line(f64, f64),
@@ -556,8 +557,8 @@ mod tests {
             )
         };
         let j = serde_json::to_string(&pre).unwrap();
-        println!("{}", j);
         let post: Draw = serde_json::from_str(&j).unwrap();
+        assert!(pre == post)
     }
 
     #[test]
@@ -571,8 +572,8 @@ mod tests {
                 dash_offset: 0.0
             };
         let j = serde_json::to_string(&pre).unwrap();
-        println!("{}", j);
         let post: StrokeStyleSerialize = serde_json::from_str(&j).unwrap();
+        assert!(pre == post)
     }
 }
 

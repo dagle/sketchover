@@ -4,23 +4,19 @@ use std::fs::{File, self};
 use std::path::PathBuf;
 
 use font_kit::source::SystemSource;
-use hex_color::{HexColor, ParseHexColorError};
 use raqote::{SolidSource, StrokeStyle};
-use serde::ser::SerializeStruct;
-use serde::{Serialize, Deserialize};
 use sketchover::config::{Args, Command, Config};
-use sketchover::draw::{Draw, DrawAction, DrawKind};
+use sketchover::draw::{Draw, DrawAction, DrawKind, self};
 use sketchover::keymap::KeyMap;
 use sketchover::mousemap::{Mouse, MouseMap};
-use sketchover::pause::{create_screenshot, ScreenCopy};
+use sketchover::output::{OutPut, Saved, Buffers, self};
 use smithay_client_toolkit::reexports::calloop::signals::{Signals, Signal};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
-use smithay_client_toolkit::shm::slot::Buffer;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
     delegate_registry, delegate_seat, delegate_shm,
-    output::{OutputHandler, OutputInfo, OutputState},
+    output::{OutputHandler, OutputState},
     reexports::protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
@@ -60,16 +56,6 @@ enum Unit {
     Cm,
 }
 
-fn parse_solid(str: &str) -> Result<SolidSource, ParseHexColorError> {
-    let hex = HexColor::parse(str)?;
-    Ok(SolidSource {
-        r: hex.r,
-        g: hex.g,
-        b: hex.b,
-        a: hex.a,
-    })
-}
-
 fn save_path() -> Option<PathBuf> {
     let base_dirs = BaseDirs::new()?;
     Some(base_dirs.data_dir().join("sketchover_save.json"))
@@ -100,11 +86,11 @@ fn main() {
 
     let shm = Shm::bind(&globals, &qh).expect("wl_shm is not available");
 
-    let fgcolor = parse_solid(&config.foreground).expect("Couldn't parse foreground color");
+    let fgcolor = draw::parse_solid(&config.foreground).expect("Couldn't parse foreground color");
     let mut palette = Vec::new();
 
     for c in config.palette {
-        let color = parse_solid(&c).expect("Couldn't parse palette color");
+        let color = draw::parse_solid(&c).expect("Couldn't parse palette color");
         palette.push(color);
     }
 
@@ -126,7 +112,7 @@ fn main() {
     .load()
     .expect("Couldn't load font");
 
-    let font_color = parse_solid(&config.text_color).expect("Couldn't parse font color");
+    let font_color = draw::parse_solid(&config.text_color).expect("Couldn't parse font color");
 
     let font_size = config.font_size;
 
@@ -178,9 +164,9 @@ fn main() {
 
     ws.insert(event_loop.handle()).expect("Unable to setup eventloop");
     event_loop.handle().insert_source(
-        Signals::new(&[Signal::SIGHUP]).unwrap(),
+        Signals::new(&[Signal::SIGTSTP]).unwrap(),
         move |evt, &mut (), sketch: &mut SketchOver| {
-            if evt.signal() == Signal::SIGHUP {
+            if evt.signal() == Signal::SIGTSTP {
                 sketch.toggle_passthrough();
             }
         },
@@ -224,72 +210,6 @@ struct SketchOver {
     key_map: HashMap<KeyMap, Command>,
     mouse_map: HashMap<MouseMap, Command>,
     save_on_exit: bool,
-}
-
-fn restore(saved: &mut Vec<Saved>, info: &OutputInfo) -> Vec<Draw> {
-    let index = saved.iter().position(|s| {
-        s.id == info.id &&
-        s.model == info.model &&
-        s.make == info.make
-    });
-    if let Some(index) = index {
-        saved.remove(index).draws
-    } else {
-        Vec::new()
-    }
-}
-
-#[derive(Deserialize)]
-pub struct Saved {
-    id: u32, // We use these 3 values to compare outputs, so we know if we should load an input
-    model: String,
-    make: String,
-    draws: Vec<Draw>,
-}
-
-pub struct OutPut {
-    output: wl_output::WlOutput,
-    width: u32,
-    height: u32,
-    info: OutputInfo,
-    pool: SlotPool,
-    buffers: Buffers,
-    interactivity: KeyboardInteractivity, 
-    layer: LayerSurface,
-    configured: bool,
-    draws: Vec<Draw>,
-    screencopy: Option<ScreenCopy>,
-}
-
-impl Serialize for OutPut {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer {
-        let mut state = serializer.serialize_struct("Saved", 4)?;
-        state.serialize_field("id", &self.info.id)?;
-        state.serialize_field("model", &self.info.model)?;
-        state.serialize_field("make", &self.info.make)?;
-        state.serialize_field("draws", &self.draws)?;
-        state.end()
-    }
-}
-
-impl OutPut {
-    fn toggle_screencopy_output(&mut self, conn: &Connection, globals: &GlobalList, shm: &Shm) {
-        self.screencopy = match self.screencopy {
-            Some(_) => None,
-            None => create_screenshot(conn, globals, shm, &self.output).ok(),
-        }
-    }
-    fn toggle_passthrough(&mut self) {
-        if self.interactivity == KeyboardInteractivity::Exclusive {
-            self.interactivity = KeyboardInteractivity::None;
-            self.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        } else {
-            self.interactivity = KeyboardInteractivity::Exclusive;
-            self.layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
-        }
-    }
 }
 
 impl CompositorHandler for SketchOver {
@@ -349,7 +269,6 @@ impl OutputHandler for SketchOver {
         let height = logical.1 as u32;
 
         layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
-        // TODO: Make it possible to toggle 
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         layer.set_exclusive_zone(-1);
         layer.set_size(width, height);
@@ -362,7 +281,7 @@ impl OutputHandler for SketchOver {
         let buffers = Buffers::new(&mut pool, width, height, wl_shm::Format::Argb8888);
 
         let draws = if let Some(ref mut saved) = self.saved {
-            restore(saved, &info)
+            output::restore(saved, &info)
         } else {
             Vec::new()
         };
@@ -738,12 +657,7 @@ impl SketchOver {
     }
 
     pub fn output(&self, surface: &wl_surface::WlSurface) -> Option<usize> {
-        for (idx, output) in self.outputs.iter().enumerate() {
-            if output.layer.wl_surface() == surface {
-                return Some(idx);
-            }
-        }
-        None
+        self.outputs.iter().position(|o| o.layer.wl_surface() == surface)
     }
 
     pub fn draw_start(&mut self, kind: DrawKind, color: SolidSource) {
@@ -901,39 +815,6 @@ impl SketchOver {
             output.layer.commit();
             output.buffers.flip();
         }
-    }
-}
-
-struct Buffers {
-    buffers: [Buffer; 2],
-    current: usize,
-}
-
-impl Buffers {
-    fn new(pool: &mut SlotPool, width: u32, height: u32, format: wl_shm::Format) -> Buffers {
-        Self {
-            buffers: [
-                pool.create_buffer(width as i32, height as i32, width as i32 * 4, format)
-                    .expect("create buffer")
-                    .0,
-                pool.create_buffer(width as i32, height as i32, width as i32 * 4, format)
-                    .expect("create buffer")
-                    .0,
-            ],
-            current: 0,
-        }
-    }
-
-    fn flip(&mut self) {
-        self.current = 1 - self.current
-    }
-
-    fn buffer(&self) -> &Buffer {
-        &self.buffers[self.current]
-    }
-
-    fn canvas<'a>(&'a self, pool: &'a mut SlotPool) -> Option<&mut [u8]> {
-        self.buffers[self.current].canvas(pool)
     }
 }
 

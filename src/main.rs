@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 use std::error;
-use std::fs::{File, self};
+use std::fs::{self, File};
 use std::path::PathBuf;
 
 use font_kit::source::SystemSource;
 use raqote::{SolidSource, StrokeStyle};
 use sketchover::config::{Args, Command, Config};
-use sketchover::draw::{Draw, DrawAction, DrawKind, self};
+use sketchover::draw::{self, Draw, DrawAction, DrawKind};
 use sketchover::keymap::KeyMap;
 use sketchover::mousemap::{Mouse, MouseMap};
-use sketchover::output::{OutPut, Saved, Buffers, self};
-use smithay_client_toolkit::reexports::calloop::signals::{Signals, Signal};
+use sketchover::output::{self, Buffers, OutPut, Saved};
+use smithay_client_toolkit::reexports::calloop::signals::{Signal, Signals};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
@@ -95,7 +95,14 @@ fn main() {
     }
 
     let savepath = save_path();
-    let saved: Option<Vec<Saved>> = savepath.as_ref().map(|p| File::open(p).ok().map(|f| serde_json::from_reader(f).expect("Couldn't parse saved file"))).flatten();
+    let saved: Option<Vec<Saved>> = savepath
+        .as_ref()
+        .map(|p| {
+            File::open(p)
+                .ok()
+                .map(|f| serde_json::from_reader(f).expect("Couldn't parse saved file"))
+        })
+        .flatten();
 
     if saved.is_some() && config.delete_save_on_resume {
         fs::remove_file(savepath.unwrap()).expect("Couldn't remove save file after loading it")
@@ -162,18 +169,23 @@ fn main() {
 
     let ws = WaylandSource::new(event_queue).expect("Unable to connect to Wayland");
 
-    ws.insert(event_loop.handle()).expect("Unable to setup eventloop");
-    event_loop.handle().insert_source(
-        Signals::new(&[Signal::SIGTSTP]).unwrap(),
-        move |evt, &mut (), sketch: &mut SketchOver| {
-            if evt.signal() == Signal::SIGTSTP {
-                sketch.toggle_passthrough();
-            }
-        },
-    ).expect("Unable to configure signal handler");
-    
-    event_loop.run(None, &mut sketch_over, |_| {
-    }).expect("Eventloop failed")
+    ws.insert(event_loop.handle())
+        .expect("Unable to setup eventloop");
+    event_loop
+        .handle()
+        .insert_source(
+            Signals::new(&[Signal::SIGTSTP]).unwrap(),
+            move |evt, &mut (), sketch: &mut SketchOver| {
+                if evt.signal() == Signal::SIGTSTP {
+                    sketch.toggle_passthrough();
+                }
+            },
+        )
+        .expect("Unable to configure signal handler");
+
+    event_loop
+        .run(None, &mut sketch_over, |_| {})
+        .expect("Eventloop failed")
 }
 
 struct SketchOver {
@@ -248,7 +260,7 @@ impl OutputHandler for SketchOver {
         let layer = self.layer_shell.create_layer_surface(
             qh,
             surface,
-            Layer::Top,
+            Layer::Overlay,
             Some("sketchover"),
             Some(&output),
         );
@@ -657,7 +669,9 @@ impl SketchOver {
     }
 
     pub fn output(&self, surface: &wl_surface::WlSurface) -> Option<usize> {
-        self.outputs.iter().position(|o| o.layer.wl_surface() == surface)
+        self.outputs
+            .iter()
+            .position(|o| o.layer.wl_surface() == surface)
     }
 
     pub fn draw_start(&mut self, kind: DrawKind, color: SolidSource) {

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 use crate::{
-    draw::DrawKind,
+    tools::DrawKind,
     keymap::KeyMap,
     mousemap::{Mouse, MouseEvent, MouseMap},
 };
@@ -102,11 +102,7 @@ pub enum Command {
 
 impl Command {
     pub fn draw_command(&self) -> bool {
-        // this is a match because there will be multiple commands that can trigger a draw
-        match self {
-            Command::DrawStart(_, _) => true,
-            _ => false,
-        }
+        matches!(self, Command::DrawStart(_, _))
     }
 }
 

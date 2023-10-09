@@ -6,10 +6,11 @@ use std::path::PathBuf;
 use font_kit::source::SystemSource;
 use raqote::{SolidSource, StrokeStyle};
 use sketchover::config::{Args, Command, Config};
-use sketchover::draw::{self, Draw, DrawAction, DrawKind};
+use sketchover::draw::{self, Draw};
 use sketchover::keymap::KeyMap;
 use sketchover::mousemap::{Mouse, MouseMap};
 use sketchover::output::{self, Buffers, OutPut, Saved};
+use sketchover::tools::{Tool, DrawKind};
 use smithay_client_toolkit::reexports::calloop::signals::{Signal, Signals};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
 use smithay_client_toolkit::{
@@ -97,12 +98,11 @@ fn main() {
     let savepath = save_path();
     let saved: Option<Vec<Saved>> = savepath
         .as_ref()
-        .map(|p| {
+        .and_then(|p| {
             File::open(p)
                 .ok()
                 .map(|f| serde_json::from_reader(f).expect("Couldn't parse saved file"))
-        })
-        .flatten();
+        });
 
     if saved.is_some() && config.delete_save_on_resume {
         fs::remove_file(savepath.unwrap()).expect("Couldn't remove save file after loading it")
@@ -688,18 +688,14 @@ impl SketchOver {
         };
 
         let output = &mut self.outputs[idx];
-        let action = match kind {
-            DrawKind::Pen => DrawAction::Pen(Vec::new()),
-            DrawKind::Line => DrawAction::Line(pos.0, pos.1),
-            DrawKind::Rect => DrawAction::Rect(5.0, 5.0),
-            DrawKind::Circle => DrawAction::Circle(pos.0 + 10.0, pos.1 + 10.0),
-        };
+        let tool = Tool::new(kind, pos);
+
         let draw = Draw {
             start: pos,
             style: self.current_style.clone(),
             color,
             distance: self.distance,
-            action,
+            tool,
         };
         output.draws.push(draw);
     }

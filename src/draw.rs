@@ -1,11 +1,12 @@
 use core::fmt;
 
-use clap::ValueEnum;
 use font_kit::font::Font;
 use hex_color::{HexColor, ParseHexColorError};
 use raqote::{DrawOptions, DrawTarget, Point, Source, StrokeStyle, LineCap, LineJoin, SolidSource};
 use serde::{Deserialize, Serialize, ser::SerializeStruct, de::{Visitor, SeqAccess, self, MapAccess}};
 use smithay_client_toolkit::seat::keyboard::Modifiers;
+
+use crate::tools::Tool;
 
 mod fk {
     pub use font_kit::canvas::{Canvas, Format, RasterizationOptions};
@@ -21,7 +22,7 @@ pub struct Draw {
     pub style: StrokeStyle,
     pub color: raqote::SolidSource,
     pub distance: bool,
-    pub action: DrawAction,
+    pub tool: Tool,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -62,7 +63,7 @@ fn read_cap(str: &str) -> Result<LineCap, String> {
         "round" => Ok(LineCap::Round),
         "square" => Ok(LineCap::Square),
         "butt" => Ok(LineCap::Butt),
-        x => return Err(format!("{x} is not a cap")),
+        x => Err(format!("{x} is not a cap")),
     }
 }
 fn read_join(str: &str) -> Result<LineJoin, String> {
@@ -70,7 +71,7 @@ fn read_join(str: &str) -> Result<LineJoin, String> {
         "round" => Ok(LineJoin::Round),
         "miter" => Ok(LineJoin::Miter),
         "bevel" => Ok(LineJoin::Bevel),
-        x => return Err(format!("{x} is not a join")),
+        x => Err(format!("{x} is not a join")),
     }
 }
 
@@ -81,6 +82,7 @@ impl<'de> Deserialize<'de> for StrokeStyleSerialize {
 
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "lowercase")]
+        #[allow(non_camel_case_types)]
         enum Field {
             Width,
             Cap,
@@ -195,7 +197,7 @@ impl<'de> Deserialize<'de> for StrokeStyleSerialize {
                 })
             }
         }
-        const FIELDS: &'static [&'static str] = &["width", "cap", "join", "miter_limit", "dash_array", "dash_offset"];
+        const FIELDS: &[&str] = &["width", "cap", "join", "miter_limit", "dash_array", "dash_offset"];
         deserializer.deserialize_struct("StrokeStyle", FIELDS, StyleVisitor)
     }
 }
@@ -213,15 +215,15 @@ impl From<&StrokeStyle> for StrokeStyleSerialize {
     }
 }
 
-impl Into<StrokeStyle> for StrokeStyleSerialize {
-    fn into(self) -> StrokeStyle {
+impl From<StrokeStyleSerialize> for StrokeStyle {
+    fn from(val: StrokeStyleSerialize) -> Self {
         StrokeStyle { 
-            width: self.width, 
-            cap: self.cap,
-            join: self.join,
-            miter_limit: self.miter_limit,
-            dash_array: self.dash_array,
-            dash_offset: self.dash_offset, 
+            width: val.width, 
+            cap: val.cap,
+            join: val.join,
+            miter_limit: val.miter_limit,
+            dash_array: val.dash_array,
+            dash_offset: val.dash_offset, 
         }
     }
 }
@@ -239,7 +241,7 @@ impl Serialize for Draw {
             self.color.r, self.color.g, self.color.b, self.color.a);
         state.serialize_field("color", &colorstr)?;
         state.serialize_field("distance", &self.distance)?;
-        state.serialize_field("action", &self.action)?;
+        state.serialize_field("action", &self.tool)?;
         state.end()
     }
 }
@@ -299,7 +301,7 @@ impl<'de> Deserialize<'de> for Draw {
                     .ok_or_else(|| de::Error::invalid_length(5, &self))?;
                 let color = parse_solid(&color_str).map_err(de::Error::custom)?;
 
-                Ok(Draw { start, style: style.into(), color, distance, action })
+                Ok(Draw { start, style: style.into(), color, distance, tool: action })
             }
 
             fn visit_map<V>(self, mut map: V) -> Result<Draw, V::Error>
@@ -351,109 +353,21 @@ impl<'de> Deserialize<'de> for Draw {
                 let color = color.ok_or_else(|| de::Error::missing_field("color"))?;
                 let distance = distance.ok_or_else(|| de::Error::missing_field("distance"))?;
                 let action = action.ok_or_else(|| de::Error::missing_field("action"))?;
-                Ok(Draw { start, style: style.into(), color, distance, action })
+                Ok(Draw { start, style: style.into(), color, distance, tool: action })
             }
         }
 
-        const FIELDS: &'static [&'static str] = &["start", "style", "color", "distance", "action"];
+        const FIELDS: &[&str] = &["start", "style", "color", "distance", "action"];
         deserializer.deserialize_struct("Draw", FIELDS, DrawVisitor)
     }
 }
 
-#[derive(ValueEnum, Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DrawKind {
-    Pen,
-    Line,
-    Rect,
-    Circle,
-}
-
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-pub enum DrawAction {
-    Pen(Vec<(f64, f64)>),
-    Line(f64, f64),
-    Rect(f64, f64),
-    Circle(f64, f64),
-}
-
 impl Draw {
     pub fn add_motion(&mut self, motion: Option<(f64, f64)>, modifier: &Modifiers) {
-        match self.action {
-            DrawAction::Pen(ref mut pen) => {
-                if let Some(motion) = motion {
-                    pen.push(motion);
-                }
-            }
-            DrawAction::Line(x, y) => {
-                let motion = motion.unwrap_or((x, y));
-                if modifier.shift {
-                    let x_length = f64::abs(motion.0 - self.start.0);
-                    let y_length = f64::abs(motion.1 - self.start.1);
-                    if x_length > y_length {
-                        self.action = DrawAction::Line(motion.0, self.start.1);
-                    } else {
-                        self.action = DrawAction::Line(self.start.0, motion.1);
-                    }
-                } else {
-                    self.action = DrawAction::Line(motion.0, motion.1);
-                }
-            }
-            DrawAction::Rect(x, y) => {
-                let (x_dist, y_dist) = match motion {
-                    Some(motion) => (motion.0 - self.start.0, motion.1 - self.start.1),
-                    None => (x, y),
-                };
-                if modifier.shift {
-                    let x_length = f64::abs(x_dist);
-                    let y_length = f64::abs(y_dist);
-                    let x_sign = f64::signum(x_dist);
-                    let y_sign = f64::signum(y_dist);
-                    if x_length > y_length {
-                        self.action = DrawAction::Rect(x_dist, x_length * y_sign);
-                    } else {
-                        self.action = DrawAction::Rect(y_length * x_sign, y_dist);
-                    }
-                } else {
-                    self.action = DrawAction::Rect(x_dist, y_dist);
-                }
-            }
-            DrawAction::Circle(_, _) => {
-                if let Some((x, y)) = motion {
-                    self.action = DrawAction::Circle(x, y);
-                }
-            }
-        }
+        self.tool.add_motion(motion, modifier)
     }
     pub fn draw(&self, dt: &mut DrawTarget<&mut [u32]>) {
-        let mut pb = raqote::PathBuilder::new();
-        pb.move_to(self.start.0 as f32, self.start.1 as f32);
-        match self.action {
-            DrawAction::Pen(ref pen) => {
-                for stroke in pen {
-                    pb.line_to(stroke.0 as f32, stroke.1 as f32);
-                    pb.move_to(stroke.0 as f32, stroke.1 as f32);
-                }
-                pb.close();
-            }
-            DrawAction::Line(x, y) => {
-                pb.line_to(x as f32, y as f32);
-            }
-            DrawAction::Rect(w, h) => {
-                pb.rect(self.start.0 as f32, self.start.1 as f32, w as f32, h as f32);
-            }
-            DrawAction::Circle(x, y) => {
-                let r = f64::sqrt(f64::powi(self.start.0 - x, 2) + f64::powi(self.start.1 - y, 2));
-                let start_x = (self.start.0 + x) / 2.0;
-                let start_y = (self.start.1 + y) / 2.0;
-                pb.arc(
-                    start_x as f32,
-                    start_y as f32,
-                    (r / 2.0) as f32,
-                    0.,
-                    2. * std::f32::consts::PI,
-                );
-            }
-        }
+        let pb = self.tool.draw();
         dt.stroke(
             &pb.finish(),
             &raqote::Source::Solid(self.color),
@@ -469,38 +383,21 @@ impl Draw {
         src: &Source,
         options: &DrawOptions,
     ) {
-        let (x, y) = match self.action {
-            DrawAction::Pen(_) => return,
-            DrawAction::Line(x, y) => (x, y),
-            DrawAction::Rect(x, y) => (x, y),
-            DrawAction::Circle(x, y) => (x, y),
-        };
-        let point = match self.action {
-            DrawAction::Pen(_) => return,
-            DrawAction::Line(x, y) => raqote::Point::new((x - 15.) as f32, (y - 15.) as f32),
-            DrawAction::Rect(x, y) => raqote::Point::new(
-                (self.start.0 + x + 15.) as f32,
-                (self.start.1 + y + 15.) as f32,
-            ),
-            DrawAction::Circle(x, y) => raqote::Point::new(
-                (self.start.0 + x + 15.) as f32,
-                (self.start.1 + y + 15.) as f32,
-            ),
-        };
-        draw_text(
-            dt,
-            font,
-            point_size,
-            &format!(
-                "({:.2}, {:.2})",
-                f64::abs(self.start.0 - x),
-                f64::abs(self.start.1 - y)
-            ),
-            // self.constraint_label(),
-            point,
-            src,
-            options,
-        );
+        if let Some(((x,y),  point)) = self.tool.draw_size() {
+            draw_text(
+                dt,
+                font,
+                point_size,
+                &format!(
+                    "({:.2}, {:.2})",
+                    f64::abs(self.start.0 - x),
+                    f64::abs(self.start.1 - y)
+                ),
+                point,
+                src,
+                options,
+            );
+        }
     }
 }
 
@@ -530,7 +427,7 @@ pub fn draw_text(
 mod tests {
     use raqote::{StrokeStyle, LineJoin, LineCap, SolidSource};
 
-    use super::{Draw, DrawAction, StrokeStyleSerialize};
+    use super::{Draw, Tool, StrokeStyleSerialize};
 
     #[test]
     fn draw_serialize_deserialize() {
@@ -544,7 +441,7 @@ mod tests {
             };
         let pre = Draw {
             start: (0.0, 0.0),
-            style: style,
+            style,
             color: SolidSource {
                 r: 200,
                 g: 140,
@@ -552,7 +449,7 @@ mod tests {
                 a: 0,
             },
             distance: false,
-            action: DrawAction::Pen(
+            tool: Tool::Pen(
                 vec![(23.0, 48.0), (48.0, 93.9)]
             )
         };

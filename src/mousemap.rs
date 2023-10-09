@@ -8,7 +8,7 @@ use serde::{
 };
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
-#[derive(Hash, Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum MouseEvent {
     BtnLeft,
     BtnRight,
@@ -21,9 +21,15 @@ pub enum MouseEvent {
     Raw(u32),
 }
 
-impl Into<u32> for &MouseEvent {
-    fn into(self) -> u32 {
-        match self {
+impl Hash for MouseEvent {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+    }
+}
+
+impl From<&MouseEvent> for u32 {
+    fn from(val: &MouseEvent) -> Self {
+        match val {
             MouseEvent::BtnLeft => 0x110,
             MouseEvent::BtnRight => 0x111,
             MouseEvent::BtnMiddle => 0x112,
@@ -68,16 +74,8 @@ pub struct MouseMap {
     pub modifier: Modifiers,
 }
 
-enum ScrollMotion {
-    ScrollUp,
-    ScrollDown,
-    ScrollLeft,
-    ScrollRight,
-}
-
 #[derive(Hash, Serialize, Deserialize, Eq, PartialEq, Debug)]
 pub enum Mouse {
-    // DescreteScroll(i32, ScrollMotion)
     ScrollUp,
     ScrollDown,
     ScrollLeft,
@@ -200,7 +198,7 @@ impl<'de> Deserialize<'de> for MouseMap {
             }
         }
 
-        const FIELDS: &'static [&'static str] = &["mouse", "modifier"];
+        const FIELDS: &[&str] = &["mouse", "modifier"];
         deserializer.deserialize_struct("MouseMap", FIELDS, KeyMapVisitor)
     }
 }

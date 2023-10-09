@@ -140,7 +140,7 @@ impl<'de> Deserialize<'de> for KeyMap {
             }
         }
 
-        const FIELDS: &'static [&'static str] = &["key", "modifier"];
+        const FIELDS: &[&str] = &["key", "modifier"];
         deserializer.deserialize_struct("KeyMap", FIELDS, KeyMapVisitor)
     }
 }

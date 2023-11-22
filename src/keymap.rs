@@ -7,10 +7,11 @@ use serde::{
     Deserialize, Deserializer, Serialize,
 };
 use smithay_client_toolkit::seat::keyboard::Modifiers;
+use xkbcommon::xkb::Keysym;
 
 #[derive(Debug)]
 pub struct KeyMap {
-    pub key: u32,
+    pub key: Keysym,
     pub modifier: Modifiers,
 }
 

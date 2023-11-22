@@ -5,7 +5,7 @@
   - A size tool
 - make it possible to escape/run a program
 
-- Add support for mousepointers [when next way of smithway 0.18 is released]
+- [x] Add support for mousepointers [when next way of smithway 0.18 is released]
 
 - Fix leaving draw mode
 

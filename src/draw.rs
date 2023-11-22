@@ -2,8 +2,12 @@ use core::fmt;
 
 use font_kit::font::Font;
 use hex_color::{HexColor, ParseHexColorError};
-use raqote::{DrawOptions, DrawTarget, Point, Source, StrokeStyle, LineCap, LineJoin, SolidSource};
-use serde::{Deserialize, Serialize, ser::SerializeStruct, de::{Visitor, SeqAccess, self, MapAccess}};
+use raqote::{DrawOptions, DrawTarget, LineCap, LineJoin, Point, SolidSource, Source, StrokeStyle};
+use serde::{
+    de::{self, MapAccess, SeqAccess, Visitor},
+    ser::SerializeStruct,
+    Deserialize, Serialize,
+};
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 use crate::tools::Tool;
@@ -17,8 +21,6 @@ mod fk {
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Draw {
-    // TODO:remove this?
-    pub start: (f64, f64),
     pub style: StrokeStyle,
     pub color: raqote::SolidSource,
     pub distance: bool,
@@ -38,7 +40,8 @@ pub struct StrokeStyleSerialize {
 impl Serialize for StrokeStyleSerialize {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer {
+        S: serde::Serializer,
+    {
         let mut state = serializer.serialize_struct("Draw", 6)?;
         state.serialize_field("width", &self.width)?;
         match self.cap {
@@ -78,8 +81,8 @@ fn read_join(str: &str) -> Result<LineJoin, String> {
 impl<'de> Deserialize<'de> for StrokeStyleSerialize {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de> {
-
+        D: serde::Deserializer<'de>,
+    {
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "lowercase")]
         #[allow(non_camel_case_types)]
@@ -129,7 +132,12 @@ impl<'de> Deserialize<'de> for StrokeStyleSerialize {
                     .ok_or_else(|| de::Error::invalid_length(5, &self))?;
 
                 Ok(StrokeStyleSerialize {
-                    width, cap, join, miter_limit, dash_array, dash_offset
+                    width,
+                    cap,
+                    join,
+                    miter_limit,
+                    dash_array,
+                    dash_offset,
                 })
             }
 
@@ -189,15 +197,30 @@ impl<'de> Deserialize<'de> for StrokeStyleSerialize {
                 let width = width.ok_or_else(|| de::Error::missing_field("width"))?;
                 let cap = cap.ok_or_else(|| de::Error::missing_field("cap"))?;
                 let join = join.ok_or_else(|| de::Error::missing_field("join"))?;
-                let miter_limit = miter_limit.ok_or_else(|| de::Error::missing_field("miter_limit"))?;
-                let dash_array = dash_array.ok_or_else(|| de::Error::missing_field("dash_array"))?;
-                let dash_offset = dash_offset.ok_or_else(|| de::Error::missing_field("dash_offset"))?;
+                let miter_limit =
+                    miter_limit.ok_or_else(|| de::Error::missing_field("miter_limit"))?;
+                let dash_array =
+                    dash_array.ok_or_else(|| de::Error::missing_field("dash_array"))?;
+                let dash_offset =
+                    dash_offset.ok_or_else(|| de::Error::missing_field("dash_offset"))?;
                 Ok(StrokeStyleSerialize {
-                    width, cap, join, miter_limit, dash_array, dash_offset
+                    width,
+                    cap,
+                    join,
+                    miter_limit,
+                    dash_array,
+                    dash_offset,
                 })
             }
         }
-        const FIELDS: &[&str] = &["width", "cap", "join", "miter_limit", "dash_array", "dash_offset"];
+        const FIELDS: &[&str] = &[
+            "width",
+            "cap",
+            "join",
+            "miter_limit",
+            "dash_array",
+            "dash_offset",
+        ];
         deserializer.deserialize_struct("StrokeStyle", FIELDS, StyleVisitor)
     }
 }
@@ -217,28 +240,30 @@ impl From<&StrokeStyle> for StrokeStyleSerialize {
 
 impl From<StrokeStyleSerialize> for StrokeStyle {
     fn from(val: StrokeStyleSerialize) -> Self {
-        StrokeStyle { 
-            width: val.width, 
+        StrokeStyle {
+            width: val.width,
             cap: val.cap,
             join: val.join,
             miter_limit: val.miter_limit,
             dash_array: val.dash_array,
-            dash_offset: val.dash_offset, 
+            dash_offset: val.dash_offset,
         }
     }
 }
 
-
 impl Serialize for Draw {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer {
+        S: serde::Serializer,
+    {
         let mut state = serializer.serialize_struct("Draw", 5)?;
-        state.serialize_field("start", &self.start)?;
+        // state.serialize_field("start", &self.start)?;
         let style: StrokeStyleSerialize = (&self.style).into();
         state.serialize_field("style", &style)?;
-        let colorstr = format!("#{:02x}{:02x}{:02x}{:02x}", 
-            self.color.r, self.color.g, self.color.b, self.color.a);
+        let colorstr = format!(
+            "#{:02x}{:02x}{:02x}{:02x}",
+            self.color.r, self.color.g, self.color.b, self.color.a
+        );
         state.serialize_field("color", &colorstr)?;
         state.serialize_field("distance", &self.distance)?;
         state.serialize_field("action", &self.tool)?;
@@ -259,8 +284,8 @@ pub fn parse_solid(str: &str) -> Result<SolidSource, ParseHexColorError> {
 impl<'de> Deserialize<'de> for Draw {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de> {
-
+        D: serde::Deserializer<'de>,
+    {
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "lowercase")]
         enum Field {
@@ -293,7 +318,7 @@ impl<'de> Deserialize<'de> for Draw {
                 let color_str: String = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(3, &self))?;
-                let distance= seq
+                let distance = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(4, &self))?;
                 let action = seq
@@ -301,7 +326,13 @@ impl<'de> Deserialize<'de> for Draw {
                     .ok_or_else(|| de::Error::invalid_length(5, &self))?;
                 let color = parse_solid(&color_str).map_err(de::Error::custom)?;
 
-                Ok(Draw { start, style: style.into(), color, distance, tool: action })
+                Ok(Draw {
+                    // start,
+                    style: style.into(),
+                    color,
+                    distance,
+                    tool: action,
+                })
             }
 
             fn visit_map<V>(self, mut map: V) -> Result<Draw, V::Error>
@@ -348,16 +379,23 @@ impl<'de> Deserialize<'de> for Draw {
                         }
                     }
                 }
-                let start = start.ok_or_else(|| de::Error::missing_field("start"))?;
+                // let start = start.ok_or_else(|| de::Error::missing_field("start"))?;
                 let style = style.ok_or_else(|| de::Error::missing_field("style"))?;
                 let color = color.ok_or_else(|| de::Error::missing_field("color"))?;
                 let distance = distance.ok_or_else(|| de::Error::missing_field("distance"))?;
                 let action = action.ok_or_else(|| de::Error::missing_field("action"))?;
-                Ok(Draw { start, style: style.into(), color, distance, tool: action })
+                Ok(Draw {
+                    // start,
+                    style: style.into(),
+                    color,
+                    distance,
+                    tool: action,
+                })
             }
         }
 
-        const FIELDS: &[&str] = &["start", "style", "color", "distance", "action"];
+        // const FIELDS: &[&str] = &["start", "style", "color", "distance", "action"];
+        const FIELDS: &[&str] = &["style", "color", "distance", "action"];
         deserializer.deserialize_struct("Draw", FIELDS, DrawVisitor)
     }
 }
@@ -383,21 +421,21 @@ impl Draw {
         src: &Source,
         options: &DrawOptions,
     ) {
-        if let Some(((x,y),  point)) = self.tool.draw_size() {
-            draw_text(
-                dt,
-                font,
-                point_size,
-                &format!(
-                    "({:.2}, {:.2})",
-                    f64::abs(self.start.0 - x),
-                    f64::abs(self.start.1 - y)
-                ),
-                point,
-                src,
-                options,
-            );
-        }
+        // if let Some(((x, y), point)) = self.tool.draw_size() {
+        //     draw_text(
+        //         dt,
+        //         font,
+        //         point_size,
+        //         &format!(
+        //             "({:.2}, {:.2})",
+        //             f64::abs(self.start.0 - x),
+        //             f64::abs(self.start.1 - y)
+        //         ),
+        //         point,
+        //         src,
+        //         options,
+        //     );
+        // }
     }
 }
 
@@ -425,22 +463,22 @@ pub fn draw_text(
 
 #[cfg(test)]
 mod tests {
-    use raqote::{StrokeStyle, LineJoin, LineCap, SolidSource};
+    use raqote::{LineCap, LineJoin, SolidSource, StrokeStyle};
 
-    use super::{Draw, Tool, StrokeStyleSerialize};
+    use super::{Draw, StrokeStyleSerialize, Tool};
 
     #[test]
     fn draw_serialize_deserialize() {
         let style = StrokeStyle {
-                width: 3.0,
-                cap: LineCap::Round,
-                join: LineJoin::Round,
-                miter_limit: 0.0,
-                dash_array: Vec::new(),
-                dash_offset: 0.0
-            };
+            width: 3.0,
+            cap: LineCap::Round,
+            join: LineJoin::Round,
+            miter_limit: 0.0,
+            dash_array: Vec::new(),
+            dash_offset: 0.0,
+        };
         let pre = Draw {
-            start: (0.0, 0.0),
+            // start: (0.0, 0.0),
             style,
             color: SolidSource {
                 r: 200,
@@ -449,9 +487,7 @@ mod tests {
                 a: 0,
             },
             distance: false,
-            tool: Tool::Pen(
-                vec![(23.0, 48.0), (48.0, 93.9)]
-            )
+            tool: Tool::Pen(vec![(23.0, 48.0), (48.0, 93.9)]),
         };
         let j = serde_json::to_string(&pre).unwrap();
         let post: Draw = serde_json::from_str(&j).unwrap();
@@ -461,16 +497,15 @@ mod tests {
     #[test]
     fn stroke_serialize_deserialize() {
         let pre = StrokeStyleSerialize {
-                width: 3.0,
-                cap: LineCap::Round,
-                join: LineJoin::Miter,
-                miter_limit: 0.0,
-                dash_array: Vec::new(),
-                dash_offset: 0.0
-            };
+            width: 3.0,
+            cap: LineCap::Round,
+            join: LineJoin::Miter,
+            miter_limit: 0.0,
+            dash_array: Vec::new(),
+            dash_offset: 0.0,
+        };
         let j = serde_json::to_string(&pre).unwrap();
         let post: StrokeStyleSerialize = serde_json::from_str(&j).unwrap();
         assert!(pre == post)
     }
 }
-

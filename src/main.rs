@@ -3,6 +3,7 @@ use std::error;
 use std::fs::{self, File};
 use std::path::PathBuf;
 
+use calloop::signals::{Signal, Signals};
 use font_kit::source::SystemSource;
 use raqote::{SolidSource, StrokeStyle};
 use sketchover::config::{Args, Command, Config};
@@ -10,9 +11,11 @@ use sketchover::draw::{self, Draw};
 use sketchover::keymap::KeyMap;
 use sketchover::mousemap::{Mouse, MouseMap};
 use sketchover::output::{self, Buffers, OutPut, Saved};
-use sketchover::tools::{Tool, DrawKind};
-use smithay_client_toolkit::reexports::calloop::signals::{Signal, Signals};
+use sketchover::tools::{DrawKind, Tool};
+// use smithay_client_toolkit::reexports::calloop::sources::signals::{Signal, Signals};
 use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
+use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
+use smithay_client_toolkit::seat::pointer::ThemeSpec;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
@@ -23,7 +26,7 @@ use smithay_client_toolkit::{
     registry_handlers,
     seat::{
         keyboard::{KeyEvent, KeyboardHandler, Modifiers},
-        pointer::{PointerEvent, PointerEventKind, PointerHandler, ThemedPointer},
+        pointer::{CursorIcon, PointerEvent, PointerEventKind, PointerHandler, ThemedPointer},
         Capability, SeatHandler, SeatState,
     },
     shell::{
@@ -36,7 +39,6 @@ use smithay_client_toolkit::{
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
 use wayland_client::globals::GlobalList;
-use wayland_client::WaylandSource;
 use wayland_client::{
     delegate_noop,
     globals::registry_queue_init,
@@ -96,13 +98,11 @@ fn main() {
     }
 
     let savepath = save_path();
-    let saved: Option<Vec<Saved>> = savepath
-        .as_ref()
-        .and_then(|p| {
-            File::open(p)
-                .ok()
-                .map(|f| serde_json::from_reader(f).expect("Couldn't parse saved file"))
-        });
+    let saved: Option<Vec<Saved>> = savepath.as_ref().and_then(|p| {
+        File::open(p)
+            .ok()
+            .map(|f| serde_json::from_reader(f).expect("Couldn't parse saved file"))
+    });
 
     if saved.is_some() && config.delete_save_on_resume {
         fs::remove_file(savepath.unwrap()).expect("Couldn't remove save file after loading it")
@@ -129,6 +129,11 @@ fn main() {
     };
 
     let mut event_loop = EventLoop::try_new().expect("couldn't create event-loop");
+    let loop_handle = event_loop.handle();
+
+    WaylandSource::new(conn.clone(), event_queue)
+        .insert(loop_handle)
+        .unwrap();
 
     let mut sketch_over = SketchOver {
         registry_state,
@@ -153,6 +158,9 @@ fn main() {
         tool_index: 0,
         tools: config.tools,
         // kind: config.starting_tool,
+        // TODO: We want a better pointer than this but smithay doesn't support one?
+        // Isn't there a pen?
+        cursor_icon: CursorIcon::Default,
         themed_pointer: None,
         current_output: None,
         outputs: Vec::new(),
@@ -167,10 +175,6 @@ fn main() {
         save_on_exit: config.save_on_exit,
     };
 
-    let ws = WaylandSource::new(event_queue).expect("Unable to connect to Wayland");
-
-    ws.insert(event_loop.handle())
-        .expect("Unable to setup eventloop");
     event_loop
         .handle()
         .insert_source(
@@ -215,6 +219,7 @@ struct SketchOver {
     modifiers: Modifiers,
     current_style: StrokeStyle,
     themed_pointer: Option<ThemedPointer>,
+    cursor_icon: CursorIcon,
     font: font_kit::loaders::freetype::Font,
     font_color: raqote::SolidSource,
     font_size: f32,
@@ -242,6 +247,16 @@ impl CompositorHandler for SketchOver {
         _time: u32,
     ) {
         self.draw(qh, surface);
+    }
+
+    fn transform_changed(
+        &mut self,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+        surface: &wl_surface::WlSurface,
+        new_transform: wl_output::Transform,
+    ) {
+        println!("Transform not implemented, your drawing might be weird");
     }
 }
 
@@ -401,22 +416,15 @@ impl SeatHandler for SketchOver {
             self.pointer = Some(pointer);
         }
 
-        // TODO: add this when 0.18 is out, I don't want to support the old API
-        // if capability == Capability::Pointer && self.themed_pointer.is_none() {
-        //     println!("Set pointer capability");
-        //     let surface = self.compositor_state.create_surface(qh);
-        //     let themed_pointer = self
-        //         .seat_state
-        //         .get_pointer_with_theme(
-        //             qh,
-        //             &seat,
-        //             self.shm_state.wl_shm(),
-        //             surface,
-        //             ThemeSpec::default(),
-        //         )
-        //         .expect("Failed to create pointer");
-        //     self.themed_pointer.replace(themed_pointer);
-        // }
+        if capability == Capability::Pointer && self.themed_pointer.is_none() {
+            println!("Set pointer capability");
+            let surface = self.compositor_state.create_surface(qh);
+            let themed_pointer = self
+                .seat_state
+                .get_pointer_with_theme(qh, &seat, self.shm.wl_shm(), surface, ThemeSpec::default())
+                .expect("Failed to create pointer");
+            self.themed_pointer.replace(themed_pointer);
+        }
     }
 
     fn remove_capability(
@@ -433,24 +441,16 @@ impl SeatHandler for SketchOver {
         if capability == Capability::Pointer && self.pointer.is_some() {
             self.pointer.take().unwrap().release();
         }
+
+        if capability == Capability::Pointer && self.themed_pointer.is_some() {
+            self.themed_pointer.take().unwrap().pointer().release();
+        }
     }
 
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 }
 
 impl KeyboardHandler for SketchOver {
-    fn enter(
-        &mut self,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-        _: &wl_keyboard::WlKeyboard,
-        _: &wl_surface::WlSurface,
-        _: u32,
-        _: &[u32],
-        _keysyms: &[u32],
-    ) {
-    }
-
     fn leave(
         &mut self,
         _: &Connection,
@@ -470,7 +470,7 @@ impl KeyboardHandler for SketchOver {
         event: KeyEvent,
     ) {
         // Esc is hardcoded
-        if event.keysym == keysyms::KEY_Escape {
+        if event.keysym.raw() == keysyms::KEY_Escape {
             self.exit();
             return;
         }
@@ -514,12 +514,24 @@ impl KeyboardHandler for SketchOver {
             }
         }
     }
+
+    fn enter(
+        &mut self,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+        keyboard: &wl_keyboard::WlKeyboard,
+        surface: &wl_surface::WlSurface,
+        serial: u32,
+        raw: &[u32],
+        keysyms: &[xkbcommon::xkb::Keysym],
+    ) {
+    }
 }
 
 impl PointerHandler for SketchOver {
     fn pointer_frame(
         &mut self,
-        _conn: &Connection,
+        conn: &Connection,
         _qh: &QueueHandle<Self>,
         _pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
@@ -531,10 +543,10 @@ impl PointerHandler for SketchOver {
             };
             match event.kind {
                 Enter { .. } => {
-                    // TODO: add this when 0.18 is out, I don't want to support the old API
-                    // if let Some(themed_pointer) = self.themed_pointer.as_mut() {
-                    //     themed_pointer.set_cursor(conn, cursor_icon);
-                    // }
+                    if let Some(themed_pointer) = self.themed_pointer.as_mut() {
+                        // TODO: warn
+                        let _ = themed_pointer.set_cursor(conn, self.cursor_icon);
+                    }
                     self.current_output = Some(output);
                     self.last_pos = Some(event.position);
                 }
@@ -691,7 +703,6 @@ impl SketchOver {
         let tool = Tool::new(kind, pos);
 
         let draw = Draw {
-            start: pos,
             style: self.current_style.clone(),
             color,
             distance: self.distance,
@@ -776,6 +787,8 @@ impl SketchOver {
                     .expect("Couldn't create canvas for drawing"),
             );
 
+            // If we have paused the screen, we draw our screenshot
+            // on top. This gives the illusion that we have paused the screen.
             if let Some(screen_copy) = &mut output.screencopy {
                 let screen_canvas = screen_copy
                     .image

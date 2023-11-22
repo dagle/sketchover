@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 use crate::{
-    tools::DrawKind,
     keymap::KeyMap,
     mousemap::{Mouse, MouseEvent, MouseMap},
+    tools::DrawKind,
 };
 
 #[derive(Parser)]
@@ -28,7 +28,7 @@ pub struct Args {
     // unit: Option<Unit>,
     /// Foreground color
     #[clap(short, long)]
-    foreground: Option<String>,
+    background: Option<String>,
 
     #[clap(long)]
     text_color: Option<String>,
@@ -65,7 +65,7 @@ pub struct Config {
     pub palette: Vec<String>,
     pub distance: bool,
     pub scroll_margine: f64,
-    pub foreground: String,
+    pub background: String,
     pub text_color: String,
     pub tools: Vec<DrawKind>,
     pub font: Option<String>,
@@ -140,10 +140,7 @@ impl Default for Config {
             KeyMap::new("q", Modifiers::default()),
             Command::DrawStart(0, 0),
         );
-        key_map.insert(
-            KeyMap::new("s", Modifiers::default()),
-            Command::Save,
-        );
+        key_map.insert(KeyMap::new("s", Modifiers::default()), Command::Save);
 
         let mut mouse_map = HashMap::new();
         mouse_map.insert(
@@ -179,7 +176,7 @@ impl Default for Config {
                 "#0000FFFF".to_owned(),
             ],
             distance: false,
-            foreground: String::from("#00000000"),
+            background: String::from("#FFFFFF40"),
             text_color: String::from("#FFFFFFFF"),
             tools: vec![DrawKind::Pen, DrawKind::Line, DrawKind::Rect],
             font: None,
@@ -210,7 +207,7 @@ impl Config {
         overwrite!(cfg.size, args.size);
         overwrite!(cfg.palette, args.palette);
         overwrite!(cfg.distance, args.distance);
-        overwrite!(cfg.foreground, args.foreground);
+        overwrite!(cfg.background, args.background);
         overwrite!(cfg.text_color, args.text_color);
         overwrite!(cfg.save_on_exit, args.save_on_exit);
         overwrite!(cfg.delete_save_on_resume, args.delete_save_on_resume);

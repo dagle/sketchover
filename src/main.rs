@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use calloop::signals::{Signal, Signals};
 use font_kit::source::SystemSource;
-use raqote::{SolidSource, StrokeStyle};
+use raqote::{AntialiasMode, BlendMode, DrawOptions, SolidSource, Source, StrokeStyle};
 use sketchover::config::{Args, Command, Config};
 use sketchover::draw::{self, Draw};
 use sketchover::keymap::KeyMap;
@@ -89,7 +89,7 @@ fn main() {
 
     let shm = Shm::bind(&globals, &qh).expect("wl_shm is not available");
 
-    let fgcolor = draw::parse_solid(&config.foreground).expect("Couldn't parse foreground color");
+    let bgcolor = draw::parse_solid(&config.background).expect("Couldn't parse foreground color");
     let mut palette = Vec::new();
 
     for c in config.palette {
@@ -150,7 +150,7 @@ fn main() {
         distance: config.distance,
         keyboard: None,
         pointer: None,
-        fgcolor,
+        bgcolor,
         modifiers: Modifiers::default(),
         palette,
         palette_index: 0,
@@ -210,7 +210,7 @@ struct SketchOver {
     layer_shell: LayerShell,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
-    fgcolor: raqote::SolidSource,
+    bgcolor: raqote::SolidSource,
     palette_index: usize,
     palette: Vec<raqote::SolidSource>,
     current_output: Option<usize>,
@@ -417,7 +417,6 @@ impl SeatHandler for SketchOver {
         }
 
         if capability == Capability::Pointer && self.themed_pointer.is_none() {
-            println!("Set pointer capability");
             let surface = self.compositor_state.create_surface(qh);
             let themed_pointer = self
                 .seat_state
@@ -517,13 +516,13 @@ impl KeyboardHandler for SketchOver {
 
     fn enter(
         &mut self,
-        conn: &Connection,
-        qh: &QueueHandle<Self>,
-        keyboard: &wl_keyboard::WlKeyboard,
-        surface: &wl_surface::WlSurface,
-        serial: u32,
-        raw: &[u32],
-        keysyms: &[xkbcommon::xkb::Keysym],
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _keyboard: &wl_keyboard::WlKeyboard,
+        _surface: &wl_surface::WlSurface,
+        _serial: u32,
+        _raw: &[u32],
+        _keysyms: &[xkbcommon::xkb::Keysym],
     ) {
     }
 }
@@ -762,6 +761,8 @@ impl SketchOver {
             // do nothing
             Command::Nop => {}
             Command::DrawStart(tidx, cidx) => {
+                // check if we are already drawing? Or should we just
+                // kidnapp the drawing
                 self.draw_start(
                     self.tools[(self.tool_index + tidx) % self.tools.len()],
                     self.palette[(self.palette_index + cidx) % self.palette.len()],
@@ -789,14 +790,12 @@ impl SketchOver {
 
             // If we have paused the screen, we draw our screenshot
             // on top. This gives the illusion that we have paused the screen.
-            if let Some(screen_copy) = &mut output.screencopy {
+            if let Some(ref mut screen_copy) = output.screencopy {
                 let screen_canvas = screen_copy
                     .image
                     .canvas(&mut screen_copy.slot)
                     .expect("Couldn't copy the screencopy to the canvas");
                 canvas.clone_from_slice(screen_canvas);
-            } else {
-                canvas.fill(0);
             }
 
             let mut dt = raqote::DrawTarget::from_backing(
@@ -805,19 +804,46 @@ impl SketchOver {
                 bytemuck::cast_slice_mut(canvas),
             );
 
-            for draw in output.draws.iter() {
-                draw.draw(&mut dt);
-
-                if draw.distance {
-                    draw.draw_size(
-                        &mut dt,
-                        &self.font,
-                        self.font_size,
-                        &self.font_color.into(),
-                        &raqote::DrawOptions::default(),
-                    );
-                }
+            if output.screencopy.is_none() {
+                dt.clear(self.bgcolor);
             }
+
+            // dt.fill(path, self.bgcolor, &raqote::DrawOptions::new())
+            // dt.copy_surface
+
+            let mut pb = raqote::PathBuilder::new();
+
+            let solid = SolidSource {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            };
+
+            pb.rect(0., 0., 400 as f32, 400 as f32);
+            dt.fill(
+                &pb.finish(),
+                &Source::Solid(solid),
+                &DrawOptions {
+                    blend_mode: BlendMode::Src,
+                    alpha: 1.,
+                    antialias: AntialiasMode::Gray,
+                },
+            );
+
+            // for draw in output.draws.iter() {
+            //     draw.draw(&mut dt);
+            //
+            //     if draw.distance {
+            //         draw.draw_size(
+            //             &mut dt,
+            //             &self.font,
+            //             self.font_size,
+            //             &self.font_color.into(),
+            //             &raqote::DrawOptions::default(),
+            //         );
+            //     }
+            // }
 
             // Damage the entire window
             output

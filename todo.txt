@@ -7,6 +7,10 @@
 
 - [x] Add support for mousepointers [when next way of smithway 0.18 is released]
 
+- [-] Add a setfg/unsetfg/togglefg? function that sets the foreground
+- [-] Being able to highligt, we need to send dt and draw in draw() and not
+  return a pb, to be able to fill.
+
 - Fix leaving draw mode
 
 - Create a text tool?
@@ -27,6 +31,7 @@
 - [x]Fix names for mouse buttons. Hard coding mouse button 272 is bad.
 
 - Fix scale factor
+- Fix rotation
 
 - update_output, is this if we change the resolution? What should we do or should we just 
   expect the user to rerun?

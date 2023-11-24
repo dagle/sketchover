@@ -37,3 +37,15 @@
   expect the user to rerun?
 
 - When pausing the colors get stronger, doing a partial rendering would fix this
+
+// should be be moved to the tools and we should have an draw current_draw_args.
+pub struct Draw {
+    pub style: StrokeStyle,
+    pub color: raqote::SolidSource,
+    pub distance: bool,
+    pub tool: Tool,
+}
+
+- [ ] Make each tool take modes that you can send to them.
+  -- [ ] How to make it less annoying to implement shift sending a mode for different keys
+- [ ] Make it into a library and make the control stuff into the binary

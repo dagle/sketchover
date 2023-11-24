@@ -1,16 +1,23 @@
-use serde::{Deserialize, Serialize, ser::SerializeStruct};
-use smithay_client_toolkit::{output::OutputInfo, shm::{slot::SlotPool, Shm}, shell::wlr_layer::{KeyboardInteractivity, LayerSurface}};
-use wayland_client::{protocol::{wl_output, wl_shm}, Connection, globals::GlobalList};
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use smithay_client_toolkit::shm::slot::Buffer;
+use smithay_client_toolkit::{
+    output::OutputInfo,
+    shell::wlr_layer::{KeyboardInteractivity, LayerSurface},
+    shm::{slot::SlotPool, Shm},
+};
+use wayland_client::{
+    globals::GlobalList,
+    protocol::{wl_output, wl_shm},
+    Connection,
+};
 
-use crate::{draw::Draw, pause::{ScreenCopy, self}};
+use crate::pause::{self, ScreenCopy};
+use crate::tools::Tool;
 
-pub fn restore(saved: &mut Vec<Saved>, info: &OutputInfo) -> Vec<Draw> {
-    let index = saved.iter().position(|s| {
-        s.id == info.id &&
-        s.model == info.model &&
-        s.make == info.make
-    });
+pub fn restore(saved: &mut Vec<Saved>, info: &OutputInfo) -> Vec<Box<dyn Tool>> {
+    let index = saved
+        .iter()
+        .position(|s| s.id == info.id && s.model == info.model && s.make == info.make);
     if let Some(index) = index {
         saved.remove(index).draws
     } else {
@@ -23,7 +30,7 @@ pub struct Saved {
     id: u32, // We use these 3 values to compare outputs, so we know if we should load an input
     model: String,
     make: String,
-    draws: Vec<Draw>,
+    draws: Vec<Box<dyn Tool>>,
 }
 
 pub struct OutPut {
@@ -33,22 +40,23 @@ pub struct OutPut {
     pub info: OutputInfo,
     pub pool: SlotPool,
     pub buffers: Buffers,
-    pub interactivity: KeyboardInteractivity, 
+    pub interactivity: KeyboardInteractivity,
     pub layer: LayerSurface,
     pub configured: bool,
-    pub draws: Vec<Draw>,
+    pub draws: Vec<Box<dyn Tool>>,
     pub screencopy: Option<ScreenCopy>,
 }
 
 impl Serialize for OutPut {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer {
+        S: serde::Serializer,
+    {
         let mut state = serializer.serialize_struct("Saved", 4)?;
         state.serialize_field("id", &self.info.id)?;
         state.serialize_field("model", &self.info.model)?;
         state.serialize_field("make", &self.info.make)?;
-        state.serialize_field("draws", &self.draws)?;
+        // state.serialize_field("draws", &self.draws)?;
         state.end()
     }
 }
@@ -63,10 +71,12 @@ impl OutPut {
     pub fn toggle_passthrough(&mut self) {
         if self.interactivity == KeyboardInteractivity::Exclusive {
             self.interactivity = KeyboardInteractivity::None;
-            self.layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            self.layer
+                .set_keyboard_interactivity(KeyboardInteractivity::None);
         } else {
             self.interactivity = KeyboardInteractivity::Exclusive;
-            self.layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+            self.layer
+                .set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         }
     }
 }
@@ -104,4 +114,3 @@ impl Buffers {
         self.buffers[self.current].canvas(pool)
     }
 }
-

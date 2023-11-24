@@ -66,9 +66,9 @@ fn save_path() -> Option<PathBuf> {
 
 fn main() {
     env_logger::init();
-    let args = Args::parse();
+    // let args = Args::parse();
 
-    let config = Config::load(args).expect("Could not parse config file");
+    // let config = Config::load(args).expect("Could not parse config file");
 
     let conn = Connection::connect_to_env().expect("Couldn't connect wayland compositor");
 
@@ -90,6 +90,8 @@ fn main() {
     let shm = Shm::bind(&globals, &qh).expect("wl_shm is not available");
 
     let bgcolor = draw::parse_solid(&config.background).expect("Couldn't parse foreground color");
+    let alt_bgcolor =
+        draw::parse_solid(&config.alt_background).expect("Couldn't parse foreground color");
     let mut palette = Vec::new();
 
     for c in config.palette {
@@ -135,6 +137,11 @@ fn main() {
         .insert(loop_handle)
         .unwrap();
 
+    // Sort the struct into 3 parts
+    // core, needed, and optional
+    // cored is functionallity that libsketch should implement
+    // needed is things the program has to implement
+    // and optional is additional features
     let mut sketch_over = SketchOver {
         registry_state,
         seat_state,
@@ -145,18 +152,22 @@ fn main() {
         shm,
         conn,
 
-        exit: event_loop.get_signal(),
-        drawing: false,
-        distance: config.distance,
         keyboard: None,
         pointer: None,
+        exit: event_loop.get_signal(),
+        drawing: false,
+
+        distance: config.distance,
         bgcolor,
+        alt_bgcolor,
+
         modifiers: Modifiers::default(),
         palette,
         palette_index: 0,
         current_style,
         tool_index: 0,
         tools: config.tools,
+        current_tool: Pen2,
         // kind: config.starting_tool,
         // TODO: We want a better pointer than this but smithay doesn't support one?
         // Isn't there a pen?
@@ -211,10 +222,12 @@ struct SketchOver {
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
     bgcolor: raqote::SolidSource,
+    alt_bgcolor: raqote::SolidSource,
     palette_index: usize,
     palette: Vec<raqote::SolidSource>,
     current_output: Option<usize>,
     tool_index: usize,
+    current_tool: DrawKind,
     tools: Vec<DrawKind>,
     modifiers: Modifiers,
     current_style: StrokeStyle,
@@ -307,11 +320,13 @@ impl OutputHandler for SketchOver {
 
         let buffers = Buffers::new(&mut pool, width, height, wl_shm::Format::Argb8888);
 
-        let draws = if let Some(ref mut saved) = self.saved {
-            output::restore(saved, &info)
-        } else {
-            Vec::new()
-        };
+        // TODO: Add this again
+        // let draws = if let Some(ref mut saved) = self.saved {
+        //     output::restore(saved, &info)
+        // } else {
+        //     Vec::new()
+        // };
+        let draws = Vec::new();
 
         let mut output = OutPut {
             output,
@@ -508,7 +523,8 @@ impl KeyboardHandler for SketchOver {
             let output = &mut self.outputs[idx];
             if self.drawing {
                 if let Some(last) = output.draws.last_mut() {
-                    last.add_motion(None, &self.modifiers);
+                    // TODO: Add modifier
+                    // last.update(None, &self.modifiers);
                 }
             }
         }
@@ -559,7 +575,7 @@ impl PointerHandler for SketchOver {
                         self.last_pos = Some(event.position);
                         if self.drawing {
                             if let Some(last) = output.draws.last_mut() {
-                                last.add_motion(Some(event.position), &self.modifiers);
+                                last.update(event.position)
                             }
                         }
                     }
@@ -758,15 +774,19 @@ impl SketchOver {
                     self.command(cmd)
                 }
             }
+            Command::ToggleFg => {
+                let temp = self.bgcolor;
+                self.bgcolor = self.alt_bgcolor;
+                self.alt_bgcolor = temp;
+            }
             // do nothing
             Command::Nop => {}
-            Command::DrawStart(tidx, cidx) => {
+            Command::DrawStart => {
                 // check if we are already drawing? Or should we just
                 // kidnapp the drawing
-                self.draw_start(
-                    self.tools[(self.tool_index + tidx) % self.tools.len()],
-                    self.palette[(self.palette_index + cidx) % self.palette.len()],
-                );
+                // self.tools[(self.tool_index + tidx) % self.tools.len()],
+                // self.palette[(self.palette_index + cidx) % self.palette.len()],
+                self.draw_start();
             }
         }
     }
@@ -831,19 +851,19 @@ impl SketchOver {
                 },
             );
 
-            // for draw in output.draws.iter() {
-            //     draw.draw(&mut dt);
-            //
-            //     if draw.distance {
-            //         draw.draw_size(
-            //             &mut dt,
-            //             &self.font,
-            //             self.font_size,
-            //             &self.font_color.into(),
-            //             &raqote::DrawOptions::default(),
-            //         );
-            //     }
-            // }
+            for draw in output.draws.iter() {
+                draw.draw(&mut dt);
+
+                // if draw.distance {
+                //     draw.draw_size(
+                //         &mut dt,
+                //         &self.font,
+                //         self.font_size,
+                //         &self.font_color.into(),
+                //         &raqote::DrawOptions::default(),
+                //     );
+                // }
+            }
 
             // Damage the entire window
             output

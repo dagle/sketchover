@@ -1,14 +1,43 @@
-use calloop::EventLoop;
+use std::error;
+use std::fs::File;
+
+use calloop::{EventLoop, LoopSignal};
+use cursor_icon::CursorIcon;
+use smithay_client_toolkit::compositor::CompositorHandler;
+use smithay_client_toolkit::output::OutputHandler;
+use smithay_client_toolkit::reexports::protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
+use smithay_client_toolkit::registry::ProvidesRegistryState;
+use smithay_client_toolkit::seat::keyboard::{KeyEvent, KeyboardHandler, Modifiers};
+use smithay_client_toolkit::seat::pointer::{
+    PointerEvent, PointerEventKind, PointerHandler, ThemeSpec, ThemedPointer,
+};
+use smithay_client_toolkit::seat::{Capability, SeatHandler};
+use smithay_client_toolkit::shell::wlr_layer::{
+    Anchor, KeyboardInteractivity, Layer, LayerShellHandler, LayerSurface, LayerSurfaceConfigure,
+};
+use smithay_client_toolkit::shell::WaylandSurface;
+use smithay_client_toolkit::shm::slot::SlotPool;
+use smithay_client_toolkit::shm::ShmHandler;
 use smithay_client_toolkit::{
     compositor::CompositorState, output::OutputState,
     reexports::calloop_wayland_source::WaylandSource, registry::RegistryState, seat::SeatState,
     shell::wlr_layer::LayerShell, shm::Shm,
 };
+use smithay_client_toolkit::{
+    delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
+    delegate_registry, delegate_seat, delegate_shm, registry_handlers,
+};
+use wayland_client::protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface};
+use wayland_client::{delegate_noop, QueueHandle};
 use wayland_client::{globals::registry_queue_init, Connection};
 
-use wayland_client::globals::GlobalList;
+use wayland_client::globals::{BindError, GlobalList};
+use xkbcommon::xkb::keysyms;
 
+use crate::keymap::KeyMap;
+use crate::mousemap::{Mouse, MouseMap};
 use crate::output::{self, Buffers, OutPut, Saved};
+use crate::tools::Tool;
 
 struct Runtime<D> {
     data: D,
@@ -24,18 +53,20 @@ struct Runtime<D> {
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
 
+    // theming, can we do these without
+    // 400 different setters
     bgcolor: raqote::SolidSource,
+    color: raqote::SolidSource,
 
     current_output: Option<usize>,
     outputs: Vec<OutPut>,
-    saved: Option<Vec<Saved>>,
 
     exit: LoopSignal,
     drawing: bool,
     last_pos: Option<(f64, f64)>,
     distance: bool,
 
-    tool: Tool,
+    tool: Box<dyn Tool>,
     modifiers: Modifiers,
 
     themed_pointer: Option<ThemedPointer>,
@@ -44,10 +75,12 @@ struct Runtime<D> {
     font_size: f32,
     save_on_exit: bool,
 }
+pub trait Bindable {}
 
+// impl<D: Bindable> Runtime<D> {
 impl<D> Runtime<D> {
     // TODO: remove all the expect
-    pub fn init() -> Runtime {
+    pub fn init(data: D) -> Runtime<D> {
         let conn = Connection::connect_to_env().expect("Couldn't connect wayland compositor");
         let (globals, event_queue) =
             registry_queue_init(&conn).expect("Couldn't create an event queue");
@@ -69,32 +102,76 @@ impl<D> Runtime<D> {
         let mut event_loop = EventLoop::try_new().expect("couldn't create event-loop");
         let loop_handle = event_loop.handle();
 
+        let runtime = Runtime {
+            data,
+            registry_state,
+            seat_state,
+            output_state,
+            compositor_state,
+            globals,
+            shm,
+            layer_shell,
+            conn,
+            keyboard: None,
+            pointer: None,
+            bgcolor: todo!(),
+            color: todo!(),
+            current_output: None,
+            outputs: Vec::new(),
+            exit: event_loop.get_signal(),
+            drawing: false,
+            last_pos: None,
+            distance: todo!(),
+            tool: todo!(),
+            modifiers: todo!(),
+            themed_pointer: todo!(),
+            cursor_icon: todo!(),
+            font_size: todo!(),
+            save_on_exit: todo!(),
+        };
         WaylandSource::new(conn.clone(), event_queue)
             .insert(loop_handle)
             .unwrap();
+        // can we move this?
         event_loop
-            .run(None, &mut sketch_over, |_| {})
-            .expect("Eventloop failed")
+            .run(None, &mut runtime, |_| {})
+            .expect("Eventloop failed");
+        runtime
     }
 
-    fn event_loop<'l>(&self) -> &mut EventLoop<'l, D> {
-        self.event_loop;
+    pub fn output(&self, surface: &wl_surface::WlSurface) -> Option<usize> {
+        self.outputs
+            .iter()
+            .position(|o| o.layer.wl_surface() == surface)
     }
 
-    fn run(&mut self) {
-        // self.event_loop
-        //     .run(None, &mut sketch_over, |_| {})
-        //     .expect("Eventloop failed")
+    // fn event_loop<'l>(&self) -> &mut EventLoop<'l, D> {
+    //     self.event_loop
+    // }
+
+    // fn run(&mut self) {
+    //     self.event_loop
+    //         .run(None, &mut self, |_| {})
+    //         .expect("Eventloop failed")
+    // }
+
+    pub fn exit(&self) {
+        if self.save_on_exit {
+            // let _ = self.save();
+        }
+        self.exit.stop();
     }
-    
+
     pub fn clear(&mut self, all: bool) {
         if all {
             for output in self.outputs.iter() {
                 output.draws = Vec::new();
             }
         } else {
-            let output = &mut self.outputs[idx];
-            output.draws = Vec::new();
+            if let Some(idx) = self.current_output {
+                let output = &mut self.outputs[idx];
+                output.draws = Vec::new();
+            }
         }
     }
 
@@ -112,72 +189,89 @@ impl<D> Runtime<D> {
     // }
 
     pub fn increase_size(&mut self) {
-        if let Some(idx) = self.current_output {
-            let current = self.outputs.get_mut(idx).unwrap();
-            current.toggle_screencopy_output(&self.conn, &self.globals, &self.shm);
+        // if let Some(idx) = self.current_output {
+        //     let current = self.outputs.get_mut(idx).unwrap();
+        //     current.toggle_screencopy_output(&self.conn, &self.globals, &self.shm);
+        // }
+    }
+
+    pub fn set_color(&mut self, color: raqote::SolidSource) {
+        self.color = color;
+    }
+
+    pub fn set_passthrough(&mut self, enable: bool) {
+        // TODO: a way to specify the monitor
+        for output in self.outputs.iter_mut() {
+            output.set_enable(enable);
         }
     }
+
     pub fn set_fg(&mut self, color: raqote::SolidSource) {
         self.bgcolor = color;
     }
-    pub fn pause(&mut self) {
 
-    }
-    pub fn unpause(&mut self) {
-
-    }
-
-    pub fn save() {
-
-    }
-
-    pub fn command(&mut self, cmd: &Command) {
-        match cmd {
-            // Command::NextColor => self.next_color(),
-            // Command::PrevColor => self.prev_color(),
-            Command::SetColor(idx) => {
-                self.palette_index = *idx;
-            }
-            // Command::NextTool => self.next_tool(),
-            // Command::PrevTool => self.prev_tool(),
-            // Command::SetTool(idx) => {
-            //     self.tool_index = *idx;
-            // }
-            Command::ToggleDistance => {
-                self.distance = !self.distance;
-            }
-            Command::IncreaseSize(step) => self.increase_size(*step),
-            Command::DecreaseSize(step) => self.decrease_size(*step),
-            Command::TogglePause => {
-                if let Some(idx) = self.current_output {
-                    let current = self.outputs.get_mut(idx).unwrap();
-                    current.toggle_screencopy_output(&self.conn, &self.globals, &self.shm);
-                }
-            }
-            Command::Save => {
-                let _ = self.save();
-            }
-            Command::Combo(cmds) => {
-                for cmd in cmds {
-                    self.command(cmd)
-                }
-            }
-            Command::ToggleFg => {
-                let temp = self.bgcolor;
-                self.bgcolor = self.alt_bgcolor;
-                self.alt_bgcolor = temp;
-            }
-            // do nothing
-            // Command::Nop => {}
-            Command::DrawStart => {
-                // check if we are already drawing? Or should we just
-                // kidnapp the drawing
-                // self.tools[(self.tool_index + tidx) % self.tools.len()],
-                // self.palette[(self.palette_index + cidx) % self.palette.len()],
-                self.draw_start();
-            }
+    // TODO: Fix this, this shouldn't toggle
+    pub fn set_pause(&mut self, pause: bool) {
+        // TODO: a way to specify the monitor?
+        if let Some(idx) = self.current_output {
+            let current = self.outputs.get_mut(idx).unwrap();
+            current.set_screen_copy(&self.conn, &self.globals, &self.shm, pause);
         }
     }
+
+    pub fn save(&mut self, path: &str) -> Result<(), Box<dyn error::Error>> {
+        let file = File::create(path)?;
+        serde_json::to_writer(file, &self.outputs)?;
+        Ok(())
+    }
+
+    // pub fn command(&mut self, cmd: &Command) {
+    //     match cmd {
+    //         // Command::NextColor => self.next_color(),
+    //         // Command::PrevColor => self.prev_color(),
+    //         Command::SetColor(idx) => {
+    //             self.palette_index = *idx;
+    //         }
+    //         // Command::NextTool => self.next_tool(),
+    //         // Command::PrevTool => self.prev_tool(),
+    //         // Command::SetTool(idx) => {
+    //         //     self.tool_index = *idx;
+    //         // }
+    //         Command::ToggleDistance => {
+    //             self.distance = !self.distance;
+    //         }
+    //         Command::IncreaseSize(step) => self.increase_size(*step),
+    //         Command::DecreaseSize(step) => self.decrease_size(*step),
+    //         Command::TogglePause => {
+    //             if let Some(idx) = self.current_output {
+    //                 let current = self.outputs.get_mut(idx).unwrap();
+    //                 current.toggle_screencopy_output(&self.conn, &self.globals, &self.shm);
+    //             }
+    //         }
+    //         Command::Save => {
+    //             let _ = self.save();
+    //         }
+    //         Command::Combo(cmds) => {
+    //             for cmd in cmds {
+    //                 self.command(cmd)
+    //             }
+    //         }
+    //         Command::ToggleFg => {
+    //             let temp = self.bgcolor;
+    //             self.bgcolor = self.alt_bgcolor;
+    //             self.alt_bgcolor = temp;
+    //         }
+    //         // do nothing
+    //         // Command::Nop => {}
+    //         Command::DrawStart => {
+    //             // check if we are already drawing? Or should we just
+    //             // kidnapp the drawing
+    //             // self.tools[(self.tool_index + tidx) % self.tools.len()],
+    //             // self.palette[(self.palette_index + cidx) % self.palette.len()],
+    //             self.draw_start();
+    //         }
+    //     }
+    // }
 
     fn draw(&mut self, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface) {
         if let Some(output) = self
@@ -216,31 +310,8 @@ impl<D> Runtime<D> {
                 dt.clear(self.bgcolor);
             }
 
-            let mut pb = raqote::PathBuilder::new();
-
-            pb.rect(0., 0., 400 as f32, 400 as f32);
-            dt.fill(
-                &pb.finish(),
-                &Source::Solid(solid),
-                &DrawOptions {
-                    blend_mode: BlendMode::Src,
-                    alpha: 1.,
-                    antialias: AntialiasMode::Gray,
-                },
-            );
-
             for draw in output.draws.iter() {
                 draw.draw(&mut dt);
-
-                // if draw.distance {
-                //     draw.draw_size(
-                //         &mut dt,
-                //         &self.font,
-                //         self.font_size,
-                //         &self.font_color.into(),
-                //         &raqote::DrawOptions::default(),
-                //     );
-                // }
             }
 
             // Damage the entire window
@@ -265,7 +336,7 @@ impl<D> Runtime<D> {
     }
 }
 
-impl CompositorHandler for SketchOver {
+impl<D> CompositorHandler for Runtime<D> {
     fn scale_factor_changed(
         &mut self,
         _conn: &Connection,
@@ -296,7 +367,7 @@ impl CompositorHandler for SketchOver {
     }
 }
 
-impl OutputHandler for SketchOver {
+impl<D> OutputHandler for Runtime<D> {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output_state
     }
@@ -364,9 +435,10 @@ impl OutputHandler for SketchOver {
             screencopy: None,
             interactivity: KeyboardInteractivity::Exclusive,
         };
-        if self.start_paused {
-            output.toggle_screencopy_output(&self.conn, &self.globals, &self.shm)
-        }
+
+        // if self.start_paused {
+        //     output.toggle_screencopy_output(&self.conn, &self.globals, &self.shm)
+        // }
         self.outputs.push(output);
     }
 
@@ -395,7 +467,7 @@ impl OutputHandler for SketchOver {
     }
 }
 
-impl LayerShellHandler for SketchOver {
+impl<D> LayerShellHandler for Runtime<D> {
     fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
         self.exit();
     }
@@ -424,7 +496,7 @@ impl LayerShellHandler for SketchOver {
     }
 }
 
-impl SeatHandler for SketchOver {
+impl<D> SeatHandler for Runtime<D> {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.seat_state
     }
@@ -487,7 +559,7 @@ impl SeatHandler for SketchOver {
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 }
 
-impl KeyboardHandler for SketchOver {
+impl<D> KeyboardHandler for Runtime<D> {
     fn leave(
         &mut self,
         _: &Connection,
@@ -516,8 +588,8 @@ impl KeyboardHandler for SketchOver {
             key: event.keysym,
             modifier: self.modifiers,
         };
-        let cmd = self.key_map.get(&keymap).unwrap_or(&Command::Nop);
-        self.command(&cmd.clone());
+        // let cmd = self.key_map.get(&keymap).unwrap_or(&Command::Nop);
+        // self.command(&cmd.clone());
     }
 
     fn release_key(
@@ -566,7 +638,7 @@ impl KeyboardHandler for SketchOver {
     }
 }
 
-impl PointerHandler for SketchOver {
+impl<D> PointerHandler for Runtime<D> {
     fn pointer_frame(
         &mut self,
         conn: &Connection,
@@ -609,8 +681,8 @@ impl PointerHandler for SketchOver {
                         modifier: self.modifiers,
                     };
 
-                    let cmd = self.mouse_map.get(&mouse_map).unwrap_or(&Command::Nop);
-                    self.command(&cmd.clone());
+                    // let cmd = self.mouse_map.get(&mouse_map).unwrap_or(&Command::Nop);
+                    // self.command(&cmd.clone());
                 }
                 Release { .. } => {
                     self.drawing = false;
@@ -639,35 +711,35 @@ impl PointerHandler for SketchOver {
                         event: action,
                         modifier: self.modifiers,
                     };
-                    let cmd = self.mouse_map.get(&mouse_map).unwrap_or(&Command::Nop);
-                    self.command(&cmd.clone());
+                    // let cmd = self.mouse_map.get(&mouse_map).unwrap_or(&Command::Nop);
+                    // self.command(&cmd.clone());
                 }
             }
         }
     }
 }
 
-// delegate_registry!(SketchOver);
-//
-// delegate_compositor!(SketchOver);
-// delegate_output!(SketchOver);
-// delegate_shm!(SketchOver);
-//
-// delegate_seat!(SketchOver);
-// delegate_keyboard!(SketchOver);
-// delegate_pointer!(SketchOver);
-//
-// delegate_layer!(SketchOver);
-//
-// delegate_noop!(SketchOver: ignore ZwlrScreencopyManagerV1);
+delegate_registry!(@<D> Runtime<D>);
 
-impl ShmHandler for SketchOver {
+delegate_compositor!(@<D> Runtime<D>);
+delegate_output!(@<D> Runtime<D>);
+delegate_shm!(@<D> Runtime<D>);
+
+delegate_seat!(@<D> Runtime<D>);
+delegate_keyboard!(@<D> Runtime<D>);
+delegate_pointer!(@<D> Runtime<D>);
+
+delegate_layer!(@<D> Runtime<D>);
+
+delegate_noop!(@<D> Runtime<D>: ignore ZwlrScreencopyManagerV1);
+
+impl<D> ShmHandler for Runtime<D> {
     fn shm_state(&mut self) -> &mut Shm {
         &mut self.shm
     }
 }
 
-impl ProvidesRegistryState for SketchOver {
+impl<D> ProvidesRegistryState for Runtime<D> {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry_state
     }

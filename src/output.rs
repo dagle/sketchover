@@ -1,3 +1,6 @@
+use std::error;
+use std::fs::File;
+
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use smithay_client_toolkit::shm::slot::Buffer;
 use smithay_client_toolkit::{
@@ -25,7 +28,7 @@ pub fn restore(saved: &mut Vec<Saved>, info: &OutputInfo) -> Vec<Box<dyn Tool>> 
     }
 }
 
-#[derive(Deserialize)]
+// #[derive(Deserialize)]
 pub struct Saved {
     id: u32, // We use these 3 values to compare outputs, so we know if we should load an input
     model: String,
@@ -62,22 +65,40 @@ impl Serialize for OutPut {
 }
 
 impl OutPut {
-    pub fn toggle_screencopy_output(&mut self, conn: &Connection, globals: &GlobalList, shm: &Shm) {
-        self.screencopy = match self.screencopy {
-            Some(_) => None,
-            None => pause::create_screenshot(conn, globals, shm, &self.output).ok(),
+    pub fn set_screen_copy(
+        &mut self,
+        conn: &Connection,
+        globals: &GlobalList,
+        shm: &Shm,
+        pause: bool,
+    ) {
+        self.screencopy = if pause {
+            pause::create_screenshot(conn, globals, shm, &self.output).ok()
+        } else {
+            None
         }
     }
-    pub fn toggle_passthrough(&mut self) {
-        if self.interactivity == KeyboardInteractivity::Exclusive {
-            self.interactivity = KeyboardInteractivity::None;
+    pub fn set_enable(&mut self, enable: bool) {
+        if enable {
             self.layer
                 .set_keyboard_interactivity(KeyboardInteractivity::None);
         } else {
-            self.interactivity = KeyboardInteractivity::Exclusive;
             self.layer
                 .set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         }
+    }
+    pub fn restore(&mut self, path: &str) -> Result<(), Box<dyn error::Error>> {
+        let saved: Vec<Saved> = File::open(path)
+            .ok()
+            .map(|f| serde_json::from_reader(f).expect("Couldn't parse saved file"));
+        let index = saved.iter().position(|s| {
+            s.id == self.info.id && s.model == self.info.model && s.make == self.info.make
+        });
+        // index.ok_or("No screen found");
+        if let Some(index) = index {
+            self.draws = saved[index].draws;
+        }
+        Ok(())
     }
 }
 

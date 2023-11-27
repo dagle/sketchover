@@ -88,17 +88,20 @@ impl OutPut {
         }
     }
     pub fn restore(&mut self, path: &str) -> Result<(), Box<dyn error::Error>> {
-        let saved: Vec<Saved> = File::open(path)
-            .ok()
-            .map(|f| serde_json::from_reader(f).expect("Couldn't parse saved file"));
-        let index = saved.iter().position(|s| {
-            s.id == self.info.id && s.model == self.info.model && s.make == self.info.make
-        });
-        // index.ok_or("No screen found");
-        if let Some(index) = index {
-            self.draws = saved[index].draws;
-        }
+        // let saved: Vec<Saved> = File::open(path)
+        //     .ok()
+        //     .map(|f| serde_json::from_reader(f).expect("Couldn't parse saved file"));
+        // let index = saved.iter().position(|s| {
+        //     s.id == self.info.id && s.model == self.info.model && s.make == self.info.make
+        // });
+        // // index.ok_or("No screen found");
+        // if let Some(index) = index {
+        //     self.draws = saved[index].draws;
+        // }
         Ok(())
+    }
+    pub fn start_draw(&mut self, tool: Box<dyn Tool>) {
+        self.draws.push(tool);
     }
 }
 

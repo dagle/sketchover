@@ -37,10 +37,27 @@ use xkbcommon::xkb::keysyms;
 use crate::keymap::KeyMap;
 use crate::mousemap::{Mouse, MouseMap};
 use crate::output::{self, Buffers, OutPut, Saved};
+use crate::tools::draw::pen::Pen;
 use crate::tools::Tool;
 
-struct Runtime<D> {
-    data: D,
+pub trait Events {
+    // type Item;
+    // fn new_output(&self, runtime: &Runtime<Self::Item>);
+    fn new_output(r: &mut Runtime<Self>, output: &OutPut)
+    where
+        Self: Sized;
+
+    fn keybinding(r: &mut Runtime<Self>, event: KeyEvent)
+    where
+        Self: Sized;
+
+    fn mousebinding(r: &mut Runtime<Self>, event: u32)
+    where
+        Self: Sized;
+}
+
+pub struct Runtime<D> {
+    pub data: D,
 
     registry_state: RegistryState,
     seat_state: SeatState,
@@ -66,21 +83,20 @@ struct Runtime<D> {
     last_pos: Option<(f64, f64)>,
     distance: bool,
 
-    tool: Box<dyn Tool>,
     modifiers: Modifiers,
 
     themed_pointer: Option<ThemedPointer>,
     cursor_icon: CursorIcon,
 
     font_size: f32,
-    save_on_exit: bool,
+    save_on_exit: bool, // remove this? We can still save after we stopped running
 }
-pub trait Bindable {}
 
 // impl<D: Bindable> Runtime<D> {
-impl<D> Runtime<D> {
+impl<D: Events + 'static> Runtime<D> {
     // TODO: remove all the expect
-    pub fn init(data: D) -> Runtime<D> {
+    // pub fn init(data: D) -> Runtime<D> {
+    pub fn init(data: D) {
         let conn = Connection::connect_to_env().expect("Couldn't connect wayland compositor");
         let (globals, event_queue) =
             registry_queue_init(&conn).expect("Couldn't create an event queue");
@@ -102,7 +118,26 @@ impl<D> Runtime<D> {
         let mut event_loop = EventLoop::try_new().expect("couldn't create event-loop");
         let loop_handle = event_loop.handle();
 
-        let runtime = Runtime {
+        let bgcolor = raqote::SolidSource {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        };
+
+        // red is the default, for now
+        let color = raqote::SolidSource {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        WaylandSource::new(conn.clone(), event_queue)
+            .insert(loop_handle)
+            .unwrap();
+        // can we move this?
+
+        let mut runtime = Runtime {
             data,
             registry_state,
             seat_state,
@@ -114,35 +149,45 @@ impl<D> Runtime<D> {
             conn,
             keyboard: None,
             pointer: None,
-            bgcolor: todo!(),
-            color: todo!(),
+            bgcolor,
+            color,
             current_output: None,
             outputs: Vec::new(),
             exit: event_loop.get_signal(),
             drawing: false,
             last_pos: None,
-            distance: todo!(),
-            tool: todo!(),
-            modifiers: todo!(),
-            themed_pointer: todo!(),
-            cursor_icon: todo!(),
-            font_size: todo!(),
-            save_on_exit: todo!(),
+            distance: false,
+            modifiers: Modifiers::default(),
+            themed_pointer: None,
+            cursor_icon: CursorIcon::Default,
+            font_size: 12.0,
+            save_on_exit: false,
         };
-        WaylandSource::new(conn.clone(), event_queue)
-            .insert(loop_handle)
-            .unwrap();
-        // can we move this?
         event_loop
             .run(None, &mut runtime, |_| {})
             .expect("Eventloop failed");
-        runtime
+        // runtime
     }
 
     pub fn output(&self, surface: &wl_surface::WlSurface) -> Option<usize> {
         self.outputs
             .iter()
             .position(|o| o.layer.wl_surface() == surface)
+    }
+
+    pub fn modifiers(&self) -> Modifiers {
+        self.modifiers
+    }
+
+    pub fn set_drawing(&mut self, enable: bool) {
+        self.drawing = enable;
+    }
+
+    pub fn start_drawing(&mut self, tool: Box<dyn Tool>) {
+        if let Some(idx) = self.current_output {
+            self.drawing = true;
+            self.outputs[idx].start_draw(tool);
+        }
     }
 
     // fn event_loop<'l>(&self) -> &mut EventLoop<'l, D> {
@@ -164,7 +209,7 @@ impl<D> Runtime<D> {
 
     pub fn clear(&mut self, all: bool) {
         if all {
-            for output in self.outputs.iter() {
+            for output in self.outputs.iter_mut() {
                 output.draws = Vec::new();
             }
         } else {
@@ -225,54 +270,6 @@ impl<D> Runtime<D> {
         Ok(())
     }
 
-    // pub fn command(&mut self, cmd: &Command) {
-    //     match cmd {
-    //         // Command::NextColor => self.next_color(),
-    //         // Command::PrevColor => self.prev_color(),
-    //         Command::SetColor(idx) => {
-    //             self.palette_index = *idx;
-    //         }
-    //         // Command::NextTool => self.next_tool(),
-    //         // Command::PrevTool => self.prev_tool(),
-    //         // Command::SetTool(idx) => {
-    //         //     self.tool_index = *idx;
-    //         // }
-    //         Command::ToggleDistance => {
-    //             self.distance = !self.distance;
-    //         }
-    //         Command::IncreaseSize(step) => self.increase_size(*step),
-    //         Command::DecreaseSize(step) => self.decrease_size(*step),
-    //         Command::TogglePause => {
-    //             if let Some(idx) = self.current_output {
-    //                 let current = self.outputs.get_mut(idx).unwrap();
-    //                 current.toggle_screencopy_output(&self.conn, &self.globals, &self.shm);
-    //             }
-    //         }
-    //         Command::Save => {
-    //             let _ = self.save();
-    //         }
-    //         Command::Combo(cmds) => {
-    //             for cmd in cmds {
-    //                 self.command(cmd)
-    //             }
-    //         }
-    //         Command::ToggleFg => {
-    //             let temp = self.bgcolor;
-    //             self.bgcolor = self.alt_bgcolor;
-    //             self.alt_bgcolor = temp;
-    //         }
-    //         // do nothing
-    //         // Command::Nop => {}
-    //         Command::DrawStart => {
-    //             // check if we are already drawing? Or should we just
-    //             // kidnapp the drawing
-    //             // self.tools[(self.tool_index + tidx) % self.tools.len()],
-    //             // self.palette[(self.palette_index + cidx) % self.palette.len()],
-    //             self.draw_start();
-    //         }
-    //     }
-    // }
-
     fn draw(&mut self, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface) {
         if let Some(output) = self
             .outputs
@@ -310,6 +307,7 @@ impl<D> Runtime<D> {
                 dt.clear(self.bgcolor);
             }
 
+            // println!("out: {}", output.draws.len());
             for draw in output.draws.iter() {
                 draw.draw(&mut dt);
             }
@@ -336,7 +334,7 @@ impl<D> Runtime<D> {
     }
 }
 
-impl<D> CompositorHandler for Runtime<D> {
+impl<D: Events + 'static> CompositorHandler for Runtime<D> {
     fn scale_factor_changed(
         &mut self,
         _conn: &Connection,
@@ -367,7 +365,7 @@ impl<D> CompositorHandler for Runtime<D> {
     }
 }
 
-impl<D> OutputHandler for Runtime<D> {
+impl<D: Events + 'static> OutputHandler for Runtime<D> {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.output_state
     }
@@ -422,7 +420,7 @@ impl<D> OutputHandler for Runtime<D> {
         // };
         let draws = Vec::new();
 
-        let mut output = OutPut {
+        let output = OutPut {
             output,
             width,
             height,
@@ -436,9 +434,7 @@ impl<D> OutputHandler for Runtime<D> {
             interactivity: KeyboardInteractivity::Exclusive,
         };
 
-        // if self.start_paused {
-        //     output.toggle_screencopy_output(&self.conn, &self.globals, &self.shm)
-        // }
+        D::new_output(self, &output);
         self.outputs.push(output);
     }
 
@@ -467,7 +463,7 @@ impl<D> OutputHandler for Runtime<D> {
     }
 }
 
-impl<D> LayerShellHandler for Runtime<D> {
+impl<D: Events + 'static> LayerShellHandler for Runtime<D> {
     fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {
         self.exit();
     }
@@ -496,7 +492,7 @@ impl<D> LayerShellHandler for Runtime<D> {
     }
 }
 
-impl<D> SeatHandler for Runtime<D> {
+impl<D: Events + 'static> SeatHandler for Runtime<D> {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.seat_state
     }
@@ -559,7 +555,7 @@ impl<D> SeatHandler for Runtime<D> {
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 }
 
-impl<D> KeyboardHandler for Runtime<D> {
+impl<D: Events + 'static> KeyboardHandler for Runtime<D> {
     fn leave(
         &mut self,
         _: &Connection,
@@ -584,12 +580,7 @@ impl<D> KeyboardHandler for Runtime<D> {
             return;
         }
 
-        let keymap = KeyMap {
-            key: event.keysym,
-            modifier: self.modifiers,
-        };
-        // let cmd = self.key_map.get(&keymap).unwrap_or(&Command::Nop);
-        // self.command(&cmd.clone());
+        D::keybinding(self, event);
     }
 
     fn release_key(
@@ -638,7 +629,7 @@ impl<D> KeyboardHandler for Runtime<D> {
     }
 }
 
-impl<D> PointerHandler for Runtime<D> {
+impl<D: Events + 'static> PointerHandler for Runtime<D> {
     fn pointer_frame(
         &mut self,
         conn: &Connection,
@@ -671,18 +662,14 @@ impl<D> PointerHandler for Runtime<D> {
                         if self.drawing {
                             if let Some(last) = output.draws.last_mut() {
                                 last.update(event.position)
+                            } else {
+                                println!("This is empty!")
                             }
                         }
                     }
                 }
                 Press { button, .. } => {
-                    let mouse_map = MouseMap {
-                        event: Mouse::Button(button.into()),
-                        modifier: self.modifiers,
-                    };
-
-                    // let cmd = self.mouse_map.get(&mouse_map).unwrap_or(&Command::Nop);
-                    // self.command(&cmd.clone());
+                    D::mousebinding(self, button);
                 }
                 Release { .. } => {
                     self.drawing = false;
@@ -719,27 +706,27 @@ impl<D> PointerHandler for Runtime<D> {
     }
 }
 
-delegate_registry!(@<D> Runtime<D>);
+delegate_registry!(@<D: Events + 'static> Runtime<D>);
 
-delegate_compositor!(@<D> Runtime<D>);
-delegate_output!(@<D> Runtime<D>);
-delegate_shm!(@<D> Runtime<D>);
+delegate_compositor!(@<D: Events + 'static> Runtime<D>);
+delegate_output!(@<D: Events + 'static> Runtime<D>);
+delegate_shm!(@<D: Events + 'static> Runtime<D>);
 
-delegate_seat!(@<D> Runtime<D>);
-delegate_keyboard!(@<D> Runtime<D>);
-delegate_pointer!(@<D> Runtime<D>);
+delegate_seat!(@<D: Events + 'static> Runtime<D>);
+delegate_keyboard!(@<D: Events + 'static> Runtime<D>);
+delegate_pointer!(@<D: Events + 'static> Runtime<D>);
 
-delegate_layer!(@<D> Runtime<D>);
+delegate_layer!(@<D: Events + 'static> Runtime<D>);
 
-delegate_noop!(@<D> Runtime<D>: ignore ZwlrScreencopyManagerV1);
+delegate_noop!(@<D: Events + 'static> Runtime<D>: ignore ZwlrScreencopyManagerV1);
 
-impl<D> ShmHandler for Runtime<D> {
+impl<D: Events + 'static> ShmHandler for Runtime<D> {
     fn shm_state(&mut self) -> &mut Shm {
         &mut self.shm
     }
 }
 
-impl<D> ProvidesRegistryState for Runtime<D> {
+impl<D: Events + 'static> ProvidesRegistryState for Runtime<D> {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.registry_state
     }

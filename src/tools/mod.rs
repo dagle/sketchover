@@ -1,6 +1,6 @@
 use raqote::{DrawTarget, Point};
 
-use serde::{Deserializer, Serializer};
+// use serde::{Deserializer, Serializer};
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 pub mod draw;
@@ -14,6 +14,12 @@ pub trait Tool {
     fn update(&mut self, motion: (f64, f64));
     /// convert the tool to a set of paths
     fn draw(&self, dt: &mut DrawTarget<&mut [u32]>);
+
+    // fn save(&self);
+    //
+    // fn read(str: String) -> Self
+    // where
+    //     Self: Sized;
 
     /// A tool sould be able to have a set of modifiers width
     /// it. Atm these are hardcoded against keys but in the future

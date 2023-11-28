@@ -1,4 +1,4 @@
-use rlua::{Lua, Result, UserData};
+use rlua::{Lua, Result, UserData, UserDataMethods};
 use rlua::{Table, Value};
 use sketchover::output::OutPut;
 use sketchover::runtime::Events;
@@ -37,6 +37,35 @@ impl LuaBindings {
     }
 }
 
+struct RuntimeData<'a>(&'a Runtime<LuaBindings>);
+
+impl<'a> UserData for RuntimeData<'a> {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("quit", |_, rt, ()| {
+            rt.0.exit();
+            Ok(())
+        });
+    }
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("undo", |_, rt, ()| {
+            rt.0.exit();
+            Ok(())
+        });
+    }
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("pause", |_, rt, ()| {
+            rt.0.exit();
+            Ok(())
+        });
+    }
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("clear", |_, rt, ()| {
+            rt.0.exit();
+            Ok(())
+        });
+    }
+}
+
 // impl UserData for Runtime<LuaBindings> {
 //     fn add_methods<'lua, T: rlua::prelude::LuaUserDataMethods<'lua, Self>>(_methods: &mut T) {}
 //
@@ -53,14 +82,20 @@ impl Events for LuaBindings {
     fn keybinding(r: &mut Runtime<Self>, event: KeyEvent) {
         let key = xkbcommon::xkb::keysym_get_name(event.keysym);
 
-        match r.data.map_key(&key) {
-            Ok(_) => {}
-            Err(e) => println!("{}", e),
-        }
-
-        // if event.keysym == xkbcommon::xkb::keysym_from_name("q", xkbcommon::xkb::KEYSYM_NO_FLAGS) {
-        //     r.exit();
-        // }
+        let apa: Result<()> = r.data.lua.context(|lua_ctx| {
+            let globals = lua_ctx.globals();
+            let tbl: Table = globals.get("Sketchover")?;
+            let key_map: Table = tbl.get("key_map")?;
+            for pair in key_map.pairs::<i64, Table>() {
+                let (_, value) = pair?;
+                let bind: String = value.get("key")?;
+                if bind == key {
+                    println!("Found key!");
+                    r.exit();
+                }
+            }
+            Ok(())
+        });
     }
 
     fn mousebinding(r: &mut Runtime<Self>, button: u32) {

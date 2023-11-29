@@ -3,6 +3,7 @@ use std::fs::File;
 
 use calloop::{EventLoop, LoopSignal};
 use cursor_icon::CursorIcon;
+use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use smithay_client_toolkit::compositor::CompositorHandler;
 use smithay_client_toolkit::output::OutputHandler;
 use smithay_client_toolkit::reexports::protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
@@ -39,9 +40,10 @@ use crate::output::{self, Buffers, OutPut, Saved};
 use crate::tools::Tool;
 
 pub trait Events {
+    fn init(&mut self) {}
     // type Item;
     // fn new_output(&self, runtime: &Runtime<Self::Item>);
-    fn new_output(r: &mut Runtime<Self>, output: &OutPut)
+    fn new_output(r: &mut Runtime<Self>, output: &mut OutPut)
     where
         Self: Sized;
 
@@ -436,7 +438,7 @@ impl<D: Events + 'static> OutputHandler for Runtime<D> {
         // };
         let draws = Vec::new();
 
-        let output = OutPut {
+        let mut output = OutPut {
             output,
             width,
             height,
@@ -450,7 +452,7 @@ impl<D: Events + 'static> OutputHandler for Runtime<D> {
             interactivity: KeyboardInteractivity::Exclusive,
         };
 
-        D::new_output(self, &output);
+        D::new_output(self, &mut output);
         self.outputs.push(output);
     }
 

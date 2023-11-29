@@ -103,6 +103,10 @@ impl OutPut {
     pub fn start_draw(&mut self, tool: Box<dyn Tool>) {
         self.draws.push(tool);
     }
+
+    pub fn name(&self) -> String {
+        "TODO!".to_owned()
+    }
 }
 
 // Maybe move

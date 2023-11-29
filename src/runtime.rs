@@ -28,16 +28,14 @@ use smithay_client_toolkit::{
     delegate_registry, delegate_seat, delegate_shm, registry_handlers,
 };
 use wayland_client::protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface};
-use wayland_client::{delegate_noop, QueueHandle};
+use wayland_client::{delegate_noop, QueueHandle, EventQueue};
 use wayland_client::{globals::registry_queue_init, Connection};
 
 use wayland_client::globals::{BindError, GlobalList};
 use xkbcommon::xkb::keysyms;
 
-use crate::keymap::KeyMap;
 use crate::mousemap::{Mouse, MouseMap};
 use crate::output::{self, Buffers, OutPut, Saved};
-use crate::tools::draw::pen::Pen;
 use crate::tools::Tool;
 
 pub trait Events {
@@ -56,9 +54,8 @@ pub trait Events {
         Self: Sized;
 }
 
-pub struct Runtime<D> {
-    pub data: D,
-
+// The wayland state, not the sketchover runtime
+pub struct WlState {
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
@@ -69,6 +66,14 @@ pub struct Runtime<D> {
     conn: Connection,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
+    themed_pointer: Option<ThemedPointer>,
+    exit: LoopSignal,
+}
+
+pub struct Runtime<D> {
+    pub data: D,
+
+    wl_runtime: Option<WlState>,
 
     // theming, can we do these without
     // 400 different setters
@@ -78,27 +83,55 @@ pub struct Runtime<D> {
     current_output: Option<usize>,
     outputs: Vec<OutPut>,
 
-    exit: LoopSignal,
     drawing: bool,
     last_pos: Option<(f64, f64)>,
     distance: bool,
 
-    modifiers: Modifiers,
-
-    themed_pointer: Option<ThemedPointer>,
     cursor_icon: CursorIcon,
 
+    modifiers: Modifiers,
+
     font_size: f32,
-    save_on_exit: bool, // remove this? We can still save after we stopped running
 }
 
 // impl<D: Bindable> Runtime<D> {
 impl<D: Events + 'static> Runtime<D> {
-    // TODO: remove all the expect
-    // pub fn init(data: D) -> Runtime<D> {
-    pub fn init(data: D) {
+    pub fn init(data: D) -> Runtime<D> {
+        let bgcolor = raqote::SolidSource {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        };
+
+        // red is the default, for now
+        let color = raqote::SolidSource {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+
+        let runtime = Runtime {
+            data,
+            wl_runtime: None,
+            bgcolor,
+            color,
+            current_output: None,
+            outputs: Vec::new(),
+            drawing: false,
+            last_pos: None,
+            distance: false,
+            modifiers: Modifiers::default(),
+            cursor_icon: CursorIcon::Default,
+            font_size: 12.0,
+        };
+        runtime
+    }
+
+    pub fn run(&mut self) {
         let conn = Connection::connect_to_env().expect("Couldn't connect wayland compositor");
-        let (globals, event_queue) =
+        let (globals, event_queue): (GlobalList, EventQueue<Runtime<D>>) =
             registry_queue_init(&conn).expect("Couldn't create an event queue");
         let qh = event_queue.handle();
 
@@ -118,27 +151,11 @@ impl<D: Events + 'static> Runtime<D> {
         let mut event_loop = EventLoop::try_new().expect("couldn't create event-loop");
         let loop_handle = event_loop.handle();
 
-        let bgcolor = raqote::SolidSource {
-            r: 0,
-            g: 0,
-            b: 0,
-            a: 0,
-        };
-
-        // red is the default, for now
-        let color = raqote::SolidSource {
-            r: 255,
-            g: 0,
-            b: 0,
-            a: 255,
-        };
         WaylandSource::new(conn.clone(), event_queue)
             .insert(loop_handle)
             .unwrap();
-        // can we move this?
 
-        let mut runtime = Runtime {
-            data,
+        let wl_state = WlState {
             registry_state,
             seat_state,
             output_state,
@@ -149,24 +166,17 @@ impl<D: Events + 'static> Runtime<D> {
             conn,
             keyboard: None,
             pointer: None,
-            bgcolor,
-            color,
-            current_output: None,
-            outputs: Vec::new(),
-            exit: event_loop.get_signal(),
-            drawing: false,
-            last_pos: None,
-            distance: false,
-            modifiers: Modifiers::default(),
             themed_pointer: None,
-            cursor_icon: CursorIcon::Default,
-            font_size: 12.0,
-            save_on_exit: false,
+            exit: event_loop.get_signal(),
         };
+
+        self.wl_runtime = Some(wl_state);
+
         event_loop
-            .run(None, &mut runtime, |_| {})
+            .run(None, self, |_| {})
             .expect("Eventloop failed");
-        // runtime
+
+        // self.wl_runtime = None;
     }
 
     pub fn output(&self, surface: &wl_surface::WlSurface) -> Option<usize> {
@@ -190,21 +200,10 @@ impl<D: Events + 'static> Runtime<D> {
         }
     }
 
-    // fn event_loop<'l>(&self) -> &mut EventLoop<'l, D> {
-    //     self.event_loop
-    // }
-
-    // fn run(&mut self) {
-    //     self.event_loop
-    //         .run(None, &mut self, |_| {})
-    //         .expect("Eventloop failed")
-    // }
-
     pub fn exit(&self) {
-        if self.save_on_exit {
-            // let _ = self.save();
+        if let Some(ref rt) = self.wl_runtime {
+            rt.exit.stop();
         }
-        self.exit.stop();
     }
 
     pub fn clear(&mut self, all: bool) {
@@ -260,7 +259,9 @@ impl<D: Events + 'static> Runtime<D> {
         // TODO: a way to specify the monitor?
         if let Some(idx) = self.current_output {
             let current = self.outputs.get_mut(idx).unwrap();
-            current.set_screen_copy(&self.conn, &self.globals, &self.shm, pause);
+            if let Some(ref rt) = self.wl_runtime {
+                current.set_screen_copy(&rt.conn, &rt.globals, &rt.shm, pause);
+            }
         }
     }
 
@@ -365,9 +366,23 @@ impl<D: Events + 'static> CompositorHandler for Runtime<D> {
     }
 }
 
+macro_rules! runtime {
+    ($var:ident) => {
+        $var.wl_runtime
+            .as_mut()
+            .expect("You are running without run")
+    };
+}
+
 impl<D: Events + 'static> OutputHandler for Runtime<D> {
     fn output_state(&mut self) -> &mut OutputState {
-        &mut self.output_state
+        // This shouldn't happen, we shouldn't be able to start the compositor without
+        // calling run
+        if let Some(rt) = self.wl_runtime.as_mut() {
+            &mut rt.output_state
+        } else {
+            panic!("You are running without run")
+        }
     }
 
     fn new_output(
@@ -376,8 +391,9 @@ impl<D: Events + 'static> OutputHandler for Runtime<D> {
         qh: &QueueHandle<Self>,
         output: wl_output::WlOutput,
     ) {
-        let surface = self.compositor_state.create_surface(qh);
-        let layer = self.layer_shell.create_layer_surface(
+        let rt = runtime!(self);
+        let surface = rt.compositor_state.create_surface(qh);
+        let layer = rt.layer_shell.create_layer_surface(
             qh,
             surface,
             Layer::Overlay,
@@ -385,7 +401,7 @@ impl<D: Events + 'static> OutputHandler for Runtime<D> {
             Some(&output),
         );
 
-        let Some(info) = self.output_state.info(&output) else {
+        let Some(info) = rt.output_state.info(&output) else {
             log::error!("Can't get screen info for new output");
             self.exit();
             return;
@@ -407,7 +423,7 @@ impl<D: Events + 'static> OutputHandler for Runtime<D> {
 
         layer.commit();
 
-        let mut pool = SlotPool::new(width as usize * height as usize * 4, &self.shm)
+        let mut pool = SlotPool::new(width as usize * height as usize * 4, &rt.shm)
             .expect("Failed to create pool");
 
         let buffers = Buffers::new(&mut pool, width, height, wl_shm::Format::Argb8888);
@@ -494,7 +510,7 @@ impl<D: Events + 'static> LayerShellHandler for Runtime<D> {
 
 impl<D: Events + 'static> SeatHandler for Runtime<D> {
     fn seat_state(&mut self) -> &mut SeatState {
-        &mut self.seat_state
+        &mut runtime!(self).seat_state
     }
 
     fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
@@ -506,29 +522,30 @@ impl<D: Events + 'static> SeatHandler for Runtime<D> {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        if capability == Capability::Keyboard && self.keyboard.is_none() {
-            let keyboard = self
+        let mut rt = runtime!(self);
+        if capability == Capability::Keyboard && rt.keyboard.is_none() {
+            let keyboard = rt
                 .seat_state
                 .get_keyboard(qh, &seat, None)
                 .expect("Failed to create keyboard");
-            self.keyboard = Some(keyboard);
+            rt.keyboard = Some(keyboard);
         }
 
-        if capability == Capability::Pointer && self.pointer.is_none() {
-            let pointer = self
+        if capability == Capability::Pointer && rt.pointer.is_none() {
+            let pointer = rt
                 .seat_state
                 .get_pointer(qh, &seat)
                 .expect("Failed to create pointer");
-            self.pointer = Some(pointer);
+            rt.pointer = Some(pointer);
         }
 
-        if capability == Capability::Pointer && self.themed_pointer.is_none() {
-            let surface = self.compositor_state.create_surface(qh);
-            let themed_pointer = self
+        if capability == Capability::Pointer && rt.themed_pointer.is_none() {
+            let surface = rt.compositor_state.create_surface(qh);
+            let themed_pointer = rt
                 .seat_state
-                .get_pointer_with_theme(qh, &seat, self.shm.wl_shm(), surface, ThemeSpec::default())
+                .get_pointer_with_theme(qh, &seat, rt.shm.wl_shm(), surface, ThemeSpec::default())
                 .expect("Failed to create pointer");
-            self.themed_pointer.replace(themed_pointer);
+            rt.themed_pointer.replace(themed_pointer);
         }
     }
 
@@ -539,16 +556,17 @@ impl<D: Events + 'static> SeatHandler for Runtime<D> {
         _: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        if capability == Capability::Keyboard && self.keyboard.is_some() {
-            self.keyboard.take().unwrap().release();
+        let mut rt = runtime!(self);
+        if capability == Capability::Keyboard && rt.keyboard.is_some() {
+            rt.keyboard.take().unwrap().release();
         }
 
-        if capability == Capability::Pointer && self.pointer.is_some() {
-            self.pointer.take().unwrap().release();
+        if capability == Capability::Pointer && rt.pointer.is_some() {
+            rt.pointer.take().unwrap().release();
         }
 
-        if capability == Capability::Pointer && self.themed_pointer.is_some() {
-            self.themed_pointer.take().unwrap().pointer().release();
+        if capability == Capability::Pointer && rt.themed_pointer.is_some() {
+            rt.themed_pointer.take().unwrap().pointer().release();
         }
     }
 
@@ -644,7 +662,7 @@ impl<D: Events + 'static> PointerHandler for Runtime<D> {
             };
             match event.kind {
                 Enter { .. } => {
-                    if let Some(themed_pointer) = self.themed_pointer.as_mut() {
+                    if let Some(themed_pointer) = runtime!(self).themed_pointer.as_mut() {
                         // TODO: warn
                         let _ = themed_pointer.set_cursor(conn, self.cursor_icon);
                     }
@@ -722,13 +740,13 @@ delegate_noop!(@<D: Events + 'static> Runtime<D>: ignore ZwlrScreencopyManagerV1
 
 impl<D: Events + 'static> ShmHandler for Runtime<D> {
     fn shm_state(&mut self) -> &mut Shm {
-        &mut self.shm
+        &mut runtime!(self).shm
     }
 }
 
 impl<D: Events + 'static> ProvidesRegistryState for Runtime<D> {
     fn registry(&mut self) -> &mut RegistryState {
-        &mut self.registry_state
+        &mut runtime!(self).registry_state
     }
     registry_handlers![OutputState, SeatState];
 }

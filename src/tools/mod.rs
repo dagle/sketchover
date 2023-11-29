@@ -8,7 +8,7 @@ pub mod draw;
 // impl<'de> Deserialize<'de> for StrokeStyleSerialize {
 // }
 // pub trait Tool: Serializer + for<'de> Deserializer<'de> {
-pub trait Tool {
+pub trait Tool: Send {
     /// When the mouse is moved, the currently active (if there is one) tool
     /// will be updated,
     fn update(&mut self, motion: (f64, f64));

@@ -38,7 +38,7 @@ impl<'a> UserData for RuntimeData<'a> {
             Ok(())
         });
         methods.add_method_mut("run", |_, rt, ()| {
-            rt.0.run();
+            // rt.0.run();
             Ok(())
         });
     }
@@ -73,6 +73,6 @@ fn main() -> Result<(), ()> {
     let lua = Lua::new();
     let b = LuaBindings { lua };
     let mut rt = Runtime::init(b);
-    rt.run();
+    // rt.run();
     Ok(())
 }

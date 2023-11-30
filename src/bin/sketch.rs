@@ -1,3 +1,6 @@
+use calloop::signals::Signal;
+use calloop::signals::Signals;
+use calloop::EventLoop;
 use sketchover::output::OutPut;
 use sketchover::runtime::Events;
 use sketchover::runtime::Runtime;
@@ -83,7 +86,20 @@ fn main() {
         save: false,
     };
     let mut rt = Runtime::init(b);
-    rt.run();
+    let event_loop = EventLoop::try_new().expect("couldn't create event-loop");
+
+    event_loop
+        .handle()
+        .insert_source(
+            Signals::new(&[Signal::SIGTSTP]).unwrap(),
+            move |evt, &mut (), runtime: &mut Runtime<Bindings>| {
+                if evt.signal() == Signal::SIGTSTP {
+                    runtime.set_passthrough(true);
+                }
+            },
+        )
+        .expect("Unable to configure signal handler");
+    rt.run(event_loop);
 
     if rt.data.save {
         // the user wants to save on exit and we have exited.

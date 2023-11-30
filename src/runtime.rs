@@ -3,7 +3,6 @@ use std::fs::File;
 
 use calloop::{EventLoop, LoopSignal};
 use cursor_icon::CursorIcon;
-use smithay_client_toolkit::reexports::calloop::channel::Sender;
 use smithay_client_toolkit::compositor::CompositorHandler;
 use smithay_client_toolkit::output::OutputHandler;
 use smithay_client_toolkit::reexports::protocols_wlr::screencopy::v1::client::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
@@ -32,11 +31,11 @@ use wayland_client::protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_s
 use wayland_client::{delegate_noop, QueueHandle, EventQueue};
 use wayland_client::{globals::registry_queue_init, Connection};
 
-use wayland_client::globals::{BindError, GlobalList};
+use wayland_client::globals::GlobalList;
 use xkbcommon::xkb::keysyms;
 
 use crate::mousemap::{Mouse, MouseMap};
-use crate::output::{self, Buffers, OutPut, Saved};
+use crate::output::{Buffers, OutPut};
 use crate::tools::Tool;
 
 pub trait Events {
@@ -131,7 +130,7 @@ impl<D: Events + 'static> Runtime<D> {
         runtime
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self, mut event_loop: EventLoop<Runtime<D>>) {
         let conn = Connection::connect_to_env().expect("Couldn't connect wayland compositor");
         let (globals, event_queue): (GlobalList, EventQueue<Runtime<D>>) =
             registry_queue_init(&conn).expect("Couldn't create an event queue");
@@ -150,7 +149,7 @@ impl<D: Events + 'static> Runtime<D> {
 
         let shm = Shm::bind(&globals, &qh).expect("wl_shm is not available");
 
-        let mut event_loop = EventLoop::try_new().expect("couldn't create event-loop");
+        // let mut event_loop = EventLoop::try_new().expect("couldn't create event-loop");
         let loop_handle = event_loop.handle();
 
         WaylandSource::new(conn.clone(), event_queue)
@@ -227,6 +226,7 @@ impl<D: Events + 'static> Runtime<D> {
             output.draws.pop();
         }
     }
+
     // pub fn set_distance(&mut self) {
     //
     // }
@@ -234,12 +234,7 @@ impl<D: Events + 'static> Runtime<D> {
     //
     // }
 
-    pub fn increase_size(&mut self) {
-        // if let Some(idx) = self.current_output {
-        //     let current = self.outputs.get_mut(idx).unwrap();
-        //     current.toggle_screencopy_output(&self.conn, &self.globals, &self.shm);
-        // }
-    }
+    pub fn increase_size(&mut self) {}
 
     pub fn set_color(&mut self, color: raqote::SolidSource) {
         self.color = color;

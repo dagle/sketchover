@@ -11,6 +11,7 @@ features = ["ron_conf"]
 default-features = false
 
 [dependencies]
+anyhow = "1.0.79"
 bytemuck = "1.14.0"
 calloop = { version = "0.12.3", features = ["signals"] }
 clap = { version = "4.4.8", features = ["derive"] }

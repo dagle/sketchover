@@ -91,6 +91,7 @@ pub struct Runtime<D> {
     cursor_icon: CursorIcon,
 
     modifiers: Modifiers,
+    pos: (f64, f64),
 
     font_size: f32,
 }
@@ -126,6 +127,7 @@ impl<D: Events + 'static> Runtime<D> {
             modifiers: Modifiers::default(),
             cursor_icon: CursorIcon::Default,
             font_size: 12.0,
+            pos: (0.0, 0.0),
         };
         runtime
     }
@@ -190,6 +192,10 @@ impl<D: Events + 'static> Runtime<D> {
         self.modifiers
     }
 
+    pub fn pos(&self) -> (f64, f64) {
+        self.pos
+    }
+
     pub fn set_drawing(&mut self, enable: bool) {
         self.drawing = enable;
     }
@@ -251,9 +257,7 @@ impl<D: Events + 'static> Runtime<D> {
         self.bgcolor = color;
     }
 
-    // TODO: Fix this, this shouldn't toggle
     pub fn set_pause(&mut self, pause: bool) {
-        // TODO: a way to specify the monitor?
         if let Some(idx) = self.current_output {
             let current = self.outputs.get_mut(idx).unwrap();
             if let Some(ref rt) = self.wl_runtime {
@@ -674,6 +678,7 @@ impl<D: Events + 'static> PointerHandler for Runtime<D> {
                         .find(|x| x.layer.wl_surface() == &event.surface)
                     {
                         self.last_pos = Some(event.position);
+                        self.pos = event.position;
                         if self.drawing {
                             if let Some(last) = output.draws.last_mut() {
                                 last.update(event.position)

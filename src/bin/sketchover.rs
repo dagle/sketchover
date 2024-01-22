@@ -1,23 +1,37 @@
 use std::path::Path;
 use std::rc::Rc;
+use std::sync;
 
+use calloop::channel::SyncSender;
 use calloop::EventLoop;
 use mlua::{Function, IntoLuaMulti, Table, Value};
 use mlua::{Lua, UserData, UserDataMethods};
 use sketchover::output::OutPut;
 use sketchover::runtime::Events;
 use sketchover::runtime::Runtime;
+use sketchover::tools::draw::line::Line;
 use sketchover::tools::draw::pen::Pen;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Modifiers};
 use xdg::BaseDirectories;
 
 struct LuaBindings {
     lua: Rc<Lua>,
+    sender: Option<Rc<SyncSender<Message>>>,
+}
+
+enum Message {
+    Clear,
+    Quit,
+    Undo,
+    Pause,
+    Unpause,
+
+    Drawing(String, (f64, f64)),
 }
 
 impl LuaBindings {
     fn new(lua: Rc<Lua>) -> Self {
-        LuaBindings { lua }
+        LuaBindings { lua, sender: None }
     }
 }
 
@@ -25,22 +39,6 @@ struct RuntimeData(Runtime<LuaBindings>);
 
 impl UserData for RuntimeData {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_method("quit", |_, rt, ()| {
-            rt.0.exit();
-            Ok(())
-        });
-        methods.add_method_mut("undo", |_, rt, ()| {
-            rt.0.undo();
-            Ok(())
-        });
-        methods.add_method_mut("pause", |_, rt, ()| {
-            rt.0.set_pause(true);
-            Ok(())
-        });
-        methods.add_method_mut("clear", |_, rt, ()| {
-            rt.0.clear(true);
-            Ok(())
-        });
         methods.add_function("keypress", |lua, func: Function| {
             register_event(lua, ("keypress".to_owned(), func))?;
             Ok(())
@@ -49,17 +47,53 @@ impl UserData for RuntimeData {
             register_event(lua, ("new_output".to_owned(), func))?;
             Ok(())
         });
-        methods.add_function("remove_output", |lua, func: Function| {
-            register_event(lua, ("remove_output".to_owned(), func))?;
+        methods.add_function("mousepress", |lua, func: Function| {
+            register_event(lua, ("mousepress".to_owned(), func))?;
             Ok(())
         });
+        // methods.add_function("remove_output", |lua, func: Function| {
+        //     register_event(lua, ("remove_output".to_owned(), func))?;
+        //     Ok(())
+        // });
+
         methods.add_method_mut("run", |_, rt, ()| {
             let event_loop = EventLoop::try_new().expect("couldn't create event-loop");
+            let (sender, receiver) = calloop::channel::sync_channel::<Message>(1);
+            event_loop
+                .handle()
+                .insert_source(
+                    receiver,
+                    |event, _, rt: &mut Runtime<LuaBindings>| match event {
+                        calloop::channel::Event::Msg(m) => match m {
+                            Message::Clear => rt.clear(true),
+                            Message::Quit => rt.exit(),
+                            Message::Undo => rt.undo(),
+                            Message::Unpause => rt.set_pause(false),
+                            Message::Pause => rt.set_pause(true),
+                            Message::Drawing(s, pos) => {
+                                match s.as_ref() {
+                                    "pen" => rt.start_drawing(Box::new(Pen::new())),
+                                    // "box" => rt.start_drawing(Box::new(Line::new())),
+                                    "line" => rt.start_drawing(Box::new(Line::new(pos))),
+                                    _ => panic!("tool doesn't exist"),
+                                }
+                            }
+                        },
+                        calloop::channel::Event::Closed => {
+                            rt.exit();
+                        }
+                    },
+                )
+                .unwrap();
+            rt.0.data.sender = Some(Rc::new(sender));
             rt.0.run(event_loop);
             Ok(())
         });
     }
 }
+
+// pub fn handler(event: Event)
+// F: FnMut(S::Event, &mut S::Metadata, &mut Data) -> S::Ret + 'l,
 
 struct LuaKeyEvent {
     modifiers: Modifiers,
@@ -80,6 +114,69 @@ impl UserData for LuaKeyEvent {
     }
 }
 
+struct MouseEvent {
+    modifiers: Modifiers,
+    button: u32,
+    pos: (f64, f64),
+}
+
+impl UserData for MouseEvent {
+    fn add_fields<'lua, F: mlua::prelude::LuaUserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("button", |_, event| Ok(event.button));
+        fields.add_field_method_get("pos", |lua, event| {
+            //
+            let table = lua.create_table()?;
+            table.set("x", event.pos.0)?;
+            table.set("y", event.pos.1)?;
+            Ok(table)
+        });
+        fields.add_field_method_get("modifiers", |lua, event| {
+            let table = lua.create_table()?;
+            table.set("ctrl", event.modifiers.ctrl)?;
+            table.set("alt", event.modifiers.ctrl)?;
+            table.set("shift", event.modifiers.ctrl)?;
+            table.set("caps_lock", event.modifiers.ctrl)?;
+            Ok(table)
+        });
+    }
+}
+
+struct Callback {
+    sender: Rc<SyncSender<Message>>,
+}
+
+impl UserData for Callback {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("quit", |_, cb, ()| {
+            cb.sender.send(Message::Quit).unwrap();
+            Ok(())
+        });
+        methods.add_method("clear", |_, cb, ()| {
+            cb.sender.send(Message::Clear).unwrap();
+            Ok(())
+        });
+        methods.add_method("undo", |_, cb, ()| {
+            cb.sender.send(Message::Undo).unwrap();
+            Ok(())
+        });
+        methods.add_method("pause", |_, cb, ()| {
+            cb.sender.send(Message::Pause).unwrap();
+            Ok(())
+        });
+        methods.add_method("unpause", |_, cb, ()| {
+            cb.sender.send(Message::Unpause).unwrap();
+            Ok(())
+        });
+
+        methods.add_method("draw", |_, cb, (name, table): (String, Table)| {
+            let x = table.get("x")?;
+            let y = table.get("y")?;
+            cb.sender.send(Message::Drawing(name, (x, y))).unwrap();
+            Ok(())
+        });
+    }
+}
+
 impl Events for LuaBindings {
     fn new_output(r: &mut Runtime<Self>, ouput: &mut OutPut) {
         let lua = &r.data.lua.clone();
@@ -96,11 +193,28 @@ impl Events for LuaBindings {
             modifiers,
             key: event,
         };
+        let cb = Callback {
+            sender: r.data.sender.as_ref().unwrap().clone(),
+        };
 
-        emit_sync_callback(lua, ("keypress".to_owned(), (args))).expect("callback failed");
+        emit_sync_callback(lua, ("keypress".to_owned(), (cb, args))).expect("callback failed");
     }
     fn mousebinding(r: &mut Runtime<Self>, button: u32) {
-        r.start_drawing(Box::new(Pen::new()));
+        let lua = &r.data.lua.clone();
+        let modifiers = r.modifiers();
+        let pos = r.pos();
+
+        let args = MouseEvent {
+            modifiers,
+            button,
+            pos,
+        };
+        let cb = Callback {
+            sender: r.data.sender.as_ref().unwrap().clone(),
+        };
+
+        // r.start_drawing(Box::new(Pen::new()));
+        emit_sync_callback(lua, ("mousepress".to_owned(), (cb, args))).expect("callback failed");
     }
 }
 

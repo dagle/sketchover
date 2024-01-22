@@ -1,4 +1,4 @@
-use raqote::DrawTarget;
+use raqote::{DrawTarget, StrokeStyle};
 // TODO: Remove
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
@@ -11,6 +11,27 @@ pub struct Line {
     stop: (f64, f64),
     real_stop: Option<(f64, f64)>,
     straight: bool,
+}
+
+impl Line {
+    pub fn new(pos: (f64, f64)) -> Self {
+        let color = raqote::SolidSource {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        Line {
+            draw: Draw {
+                style: StrokeStyle::default(),
+                color,
+            },
+            start: pos,
+            stop: (pos.0 + 2.0, pos.1 + 2.0),
+            real_stop: None,
+            straight: false,
+        }
+    }
 }
 
 impl Tool for Line {

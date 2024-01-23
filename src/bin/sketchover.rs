@@ -1,16 +1,18 @@
 use std::path::Path;
 use std::rc::Rc;
-use std::sync;
 
 use calloop::channel::SyncSender;
 use calloop::EventLoop;
-use mlua::{Function, IntoLuaMulti, Table, Value};
+use mlua::{FromLua, Function, IntoLuaMulti, Table, Value};
 use mlua::{Lua, UserData, UserDataMethods};
+use raqote::{SolidSource, StrokeStyle};
 use sketchover::output::OutPut;
 use sketchover::runtime::Events;
 use sketchover::runtime::Runtime;
+use sketchover::tools::draw::draw::Draw;
 use sketchover::tools::draw::line::Line;
 use sketchover::tools::draw::pen::Pen;
+use sketchover::tools::draw::rekt::Rect;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Modifiers};
 use xdg::BaseDirectories;
 
@@ -35,6 +37,72 @@ impl LuaBindings {
     }
 }
 
+struct LuaDraw(Draw);
+struct LuaStroke(StrokeStyle);
+struct LuaColor(SolidSource);
+
+// impl<'lua> FromLua<'lua> for LuaDraw {
+//     fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> mlua::prelude::LuaResult<Self> {
+//         match value {
+//             Value::Table(table) => {
+//                 let lstyle = table.get("style")?; // or default
+//                 let lcolor = table.get("color")?; // or default
+//                 let draw = Draw {
+//                     style: lstyle.0;
+//                     color: lcolor.0;
+//                 };
+//                 Ok(LuaDraw(draw))
+//             }
+//             what => todo!(),
+//         }
+//     }
+// }
+// impl<'lua> FromLua<'lua> for LuaStroke {
+//     fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> mlua::prelude::LuaResult<Self> {
+//         match value {
+//             Value::Table(table) => {
+//                 let width = table.get("width")?; 
+//                 let cap_str = table.get("cap")?;
+//                 let join_str = table.get("join")?;
+//                 let miter_limit = table.get("miter_limit")?;
+//                 let dash_array = table.get("dash_array")?;
+//                 let dash_offset = table.get("dash_offset")?;
+//                 let solid = StrokeStyle {
+//                     width,
+//                     cap,
+//                     join,
+//                     miter_limit,
+//                     dash_array,
+//                     dash_offset,
+//                 };
+//                 Ok(LuaStroke(solid))
+//             }
+//             what => todo!(),
+//         }
+//     }
+// }
+//
+// impl<'lua> FromLua<'lua> for LuaColor {
+//     fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> mlua::prelude::LuaResult<Self> {
+//         match value {
+//             Value::Table(table) => {
+//                 let red = table.get("r")?;
+//                 let green = table.get("b")?;
+//                 let blue = table.get("g")?;
+//                 let alpha = table.get("a")?;
+//                 let solid = SolidSource {
+//                     r: red,
+//                     g: green,
+//                     b: blue,
+//                     a: alpha,
+//                 };
+//                 Ok(LuaColor(solid))
+//             }
+//             what => todo!(),
+//         }
+//     }
+// }
+
 struct RuntimeData(Runtime<LuaBindings>);
 
 impl UserData for RuntimeData {
@@ -58,7 +126,7 @@ impl UserData for RuntimeData {
 
         methods.add_method_mut("run", |_, rt, ()| {
             let event_loop = EventLoop::try_new().expect("couldn't create event-loop");
-            let (sender, receiver) = calloop::channel::sync_channel::<Message>(1);
+            let (sender, receiver) = calloop::channel::sync_channel::<Message>(3);
             event_loop
                 .handle()
                 .insert_source(
@@ -70,14 +138,12 @@ impl UserData for RuntimeData {
                             Message::Undo => rt.undo(),
                             Message::Unpause => rt.set_pause(false),
                             Message::Pause => rt.set_pause(true),
-                            Message::Drawing(s, pos) => {
-                                match s.as_ref() {
-                                    "pen" => rt.start_drawing(Box::new(Pen::new())),
-                                    // "box" => rt.start_drawing(Box::new(Line::new())),
-                                    "line" => rt.start_drawing(Box::new(Line::new(pos))),
-                                    _ => panic!("tool doesn't exist"),
-                                }
-                            }
+                            Message::Drawing(s, pos) => match s.as_ref() {
+                                "pen" => rt.start_drawing(Box::new(Pen::new(pos))),
+                                "rect" => rt.start_drawing(Box::new(Rect::new(pos))),
+                                "line" => rt.start_drawing(Box::new(Line::new(pos))),
+                                _ => panic!("tool doesn't exist"),
+                            },
                         },
                         calloop::channel::Event::Closed => {
                             rt.exit();
@@ -91,9 +157,6 @@ impl UserData for RuntimeData {
         });
     }
 }
-
-// pub fn handler(event: Event)
-// F: FnMut(S::Event, &mut S::Metadata, &mut Data) -> S::Ret + 'l,
 
 struct LuaKeyEvent {
     modifiers: Modifiers,
@@ -122,7 +185,21 @@ struct MouseEvent {
 
 impl UserData for MouseEvent {
     fn add_fields<'lua, F: mlua::prelude::LuaUserDataFields<'lua, Self>>(fields: &mut F) {
-        fields.add_field_method_get("button", |_, event| Ok(event.button));
+        fields.add_field_method_get("button", |lua, event| {
+            let value = match event.button {
+                0x110 => lua.create_string("left"),
+                0x111 => lua.create_string("right"),
+                0x112 => lua.create_string("middle"),
+                0x113 => lua.create_string("side"),
+                0x114 => lua.create_string("extra"),
+                0x115 => lua.create_string("forward"),
+                0x116 => lua.create_string("back"),
+                0x117 => lua.create_string("task"),
+                raw => return Ok(Value::Number(raw.into())),
+            };
+            let k = value?;
+            Ok(Value::String(k))
+        });
         fields.add_field_method_get("pos", |lua, event| {
             //
             let table = lua.create_table()?;
@@ -264,7 +341,7 @@ pub fn register_event<'lua>(
     }
 }
 
-pub fn get_or_create_module(lua: Rc<Lua>, name: &str) -> anyhow::Result<()> {
+pub fn get_or_create_runtime(lua: Rc<Lua>, name: &str) -> anyhow::Result<()> {
     let globals = lua.globals();
     let package: Table = globals.get("package")?;
     let loaded: Table = package.get("loaded")?;
@@ -276,7 +353,71 @@ pub fn get_or_create_module(lua: Rc<Lua>, name: &str) -> anyhow::Result<()> {
 
             let rt = Runtime::init(binds);
             let data = RuntimeData(rt);
-            loaded.set("sketchover", data)?;
+            loaded.set(name, data)?;
+            Ok(())
+        }
+        Value::UserData(_) => Ok(()),
+        wat => anyhow::bail!(
+            "cannot register module {} as package.loaded.{} is already set to a value of type {}",
+            name,
+            name,
+            wat.type_name()
+        ),
+    }
+}
+
+pub fn get_or_create_module(lua: &'lua Lua, name: &str) -> anyhow::Result<()> {
+    let globals = lua.globals();
+    let package: Table = globals.get("package")?;
+    let loaded: Table = package.get("loaded")?;
+
+    let module = loaded.get(name)?;
+    match module {
+        Value::Nil => {
+            let table = lua.create_table()?;
+            let draw = lua.create_function(|lua, table: Table| {
+                let lstyle = table.get("style")?; // or default
+                let lcolor = table.get("color")?; // or default
+                let draw = Draw {
+                    style: lstyle.0;
+                    color: lcolor.0;
+                };
+                Ok(LuaDraw(draw))
+            };
+            let style = lua.create_function(|lua, table: Table| {
+                let width = table.get("width")?;
+                let cap_str = table.get("cap")?;
+                let join_str = table.get("join")?;
+                let miter_limit = table.get("miter_limit")?;
+                let dash_array = table.get("dash_array")?;
+                let dash_offset = table.get("dash_offset")?;
+                let solid = StrokeStyle {
+                    width,
+                    cap,
+                    join,
+                    miter_limit,
+                    dash_array,
+                    dash_offset,
+                };
+                Ok(LuaStroke(solid))
+            };
+            let color = lua.create_function(|lua, table: Table| {
+                let red = table.get("r")?;
+                let green = table.get("b")?;
+                let blue = table.get("g")?;
+                let alpha = table.get("a")?;
+                let solid = SolidSource {
+                    r: red,
+                    g: green,
+                    b: blue,
+                    a: alpha,
+                };
+                Ok(LuaColor(solid))
+            };
+            table.set("Draw", draw);
+            table.set("Style", style);
+            table.set("Color", color);
+            loaded.set(name, table)?;
             Ok(())
         }
         Value::UserData(_) => Ok(()),
@@ -292,12 +433,12 @@ pub fn get_or_create_module(lua: Rc<Lua>, name: &str) -> anyhow::Result<()> {
 pub fn make_lua_context(config_file: &Path) -> anyhow::Result<()> {
     let lua = Rc::new(Lua::new());
 
-    get_or_create_module(lua.clone(), "sketchover")?;
+    get_or_create_runtime(lua.clone(), "sketchover")?;
+    get_or_create_module(lua.clone(), "sketchover.draw")?;
     let path = format!(
         "package.path = package.path .. ';{}?.lua;'",
         config_file.to_str().unwrap()
     );
-    println!("path: {}", &path);
     lua.load(&path).exec().unwrap();
     lua.load("require('mmm')").exec().unwrap();
 

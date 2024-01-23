@@ -1,51 +1,25 @@
-- Optimize the rendering
-- An optional ui
-  - A palett
-  - A toolbox
-  - A size tool
-- make it possible to escape/run a program
+Core:
+- [?] Draw should take a style, so we can specify the style and update it.
 
-- [x] Add support for mousepointers [when next way of smithway 0.18 is released]
+- [ ] output should have an api easier to work with, atm callbacks are useless?
 
-- [-] Add a setfg/unsetfg/togglefg? function that sets the foreground
-- [-] Being able to highligt, we need to send dt and draw in draw() and not
-  return a pb, to be able to fill.
-
-- Fix leaving draw mode
-
-- Create a text tool?
--- How to type without triggering keybindings? Ignore keybindings until esc is pressed?
-
-- [x] Draw Alt mode, draws with the alt color. 
-
-- [x] Kinda done
-- Being able to set things to specific values instead of relative.
--- SetColor, SetTool, kinda done.
--- Can we remove the usizes? 
-
-- Add integer values to nextcolor, prevcolor, nexttool, prevtool (2t => next tool twice)
-
+Runtime:
 - [?] Make it possible to bind thing to the mouse wheel.
 -- Descrete scrolling not done
 
-- [x]Fix names for mouse buttons. Hard coding mouse button 272 is bad.
-
-- Fix scale factor
-- Fix rotation
-
-- update_output, is this if we change the resolution? What should we do or should we just 
-  expect the user to rerun?
-
 - When pausing the colors get stronger, doing a partial rendering would fix this
 
-// should be be moved to the tools and we should have an draw current_draw_args.
-pub struct Draw {
-    pub style: StrokeStyle,
-    pub color: raqote::SolidSource,
-    pub distance: bool,
-    pub tool: Tool,
-}
+- [-] Add a setfg/unsetfg function that sets the foreground
 
-- [ ] Make each tool take modes that you can send to them.
-  -- [ ] How to make it less annoying to implement shift sending a mode for different keys
-- [ ] Make it into a library and make the control stuff into the binary
+- Fix scale factor and rotation for outputs, we need to detect if the
+  screen needs scaling etc
+
+Plugins: 
+- [ ] Get a working plugin and an example plugin to work.
+
+- [-] Being able to highligt, we need to send dt and draw in draw() and not
+  return a pb, to be able to fill.
+
+- Create a text tool?
+-- How to type without triggering keybindings? Ignore keybindings until esc is pressed?
+  (this needs to be in core)

@@ -1,5 +1,6 @@
 use raqote::DrawTarget;
 
+use crate::tools::draw::draw;
 use crate::tools::draw::draw::Draw;
 use crate::tools::Tool;
 
@@ -12,7 +13,7 @@ pub struct Circle {
 
 impl Tool for Circle {
     fn update(&mut self, motion: (f64, f64)) {
-        self.stop = motion;
+        self.stop = draw::diff(self.start, motion);
     }
 
     fn draw(&self, dt: &mut DrawTarget<&mut [u32]>) {

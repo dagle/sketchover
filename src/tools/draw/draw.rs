@@ -28,6 +28,10 @@ pub struct StrokeStyleSerialize {
     pub dash_offset: f32,
 }
 
+pub fn diff(pos: (f64, f64), motion: (f64, f64)) -> (f64, f64) {
+    (motion.0 - pos.0, motion.1 - pos.1)
+}
+
 impl Serialize for StrokeStyleSerialize {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

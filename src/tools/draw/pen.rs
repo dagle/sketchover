@@ -9,7 +9,7 @@ pub struct Pen {
 }
 
 impl Pen {
-    pub fn new() -> Self {
+    pub fn new(_: (f64, f64)) -> Self {
         let color = raqote::SolidSource {
             r: 255,
             g: 0,

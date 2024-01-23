@@ -86,14 +86,11 @@ pub struct Runtime<D> {
 
     drawing: bool,
     last_pos: Option<(f64, f64)>,
-    distance: bool,
+    last_serial: Option<u32>,
 
     cursor_icon: CursorIcon,
 
     modifiers: Modifiers,
-    pos: (f64, f64),
-
-    font_size: f32,
 }
 
 // impl<D: Bindable> Runtime<D> {
@@ -123,11 +120,9 @@ impl<D: Events + 'static> Runtime<D> {
             outputs: Vec::new(),
             drawing: false,
             last_pos: None,
-            distance: false,
+            last_serial: None,
             modifiers: Modifiers::default(),
             cursor_icon: CursorIcon::Default,
-            font_size: 12.0,
-            pos: (0.0, 0.0),
         };
         runtime
     }
@@ -193,7 +188,7 @@ impl<D: Events + 'static> Runtime<D> {
     }
 
     pub fn pos(&self) -> (f64, f64) {
-        self.pos
+        self.last_pos.unwrap_or((0.0, 0.0))
     }
 
     pub fn set_drawing(&mut self, enable: bool) {
@@ -678,7 +673,6 @@ impl<D: Events + 'static> PointerHandler for Runtime<D> {
                         .find(|x| x.layer.wl_surface() == &event.surface)
                     {
                         self.last_pos = Some(event.position);
-                        self.pos = event.position;
                         if self.drawing {
                             if let Some(last) = output.draws.last_mut() {
                                 last.update(event.position)
@@ -688,8 +682,11 @@ impl<D: Events + 'static> PointerHandler for Runtime<D> {
                         }
                     }
                 }
-                Press { button, .. } => {
-                    D::mousebinding(self, button);
+                Press { button, serial, .. } => {
+                    if self.last_serial.map_or(true, |s| s != serial) {
+                        D::mousebinding(self, button);
+                    }
+                    self.last_serial = Some(serial);
                 }
                 Release { .. } => {
                     self.drawing = false;

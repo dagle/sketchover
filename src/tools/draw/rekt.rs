@@ -1,5 +1,6 @@
-use raqote::DrawTarget;
+use raqote::{DrawTarget, StrokeStyle};
 
+use crate::tools::draw::draw;
 use crate::tools::draw::draw::Draw;
 use crate::tools::Tool;
 
@@ -11,9 +12,30 @@ pub struct Rect {
     fill: bool,
 }
 
+impl Rect {
+    pub fn new(pos: (f64, f64)) -> Self {
+        let color = raqote::SolidSource {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
+        Rect {
+            draw: Draw {
+                style: StrokeStyle::default(),
+                color,
+            },
+            start: pos,
+            stop: (20.0, 20.0),
+            square: false,
+            fill: false,
+        }
+    }
+}
+
 impl Tool for Rect {
     fn update(&mut self, motion: (f64, f64)) {
-        self.stop = motion;
+        self.stop = draw::diff(self.start, motion);
     }
 
     fn draw(&self, dt: &mut DrawTarget<&mut [u32]>) {

@@ -14,6 +14,7 @@ pub struct Line {
 }
 
 impl Line {
+    // pub fn new(pos: (f64, f64), draw: Draw) -> Self {
     pub fn new(pos: (f64, f64)) -> Self {
         let color = raqote::SolidSource {
             r: 255,
@@ -27,7 +28,7 @@ impl Line {
                 color,
             },
             start: pos,
-            stop: (pos.0 + 2.0, pos.1 + 2.0),
+            stop: (pos.0 + 20.0, pos.1 + 20.0),
             real_stop: None,
             straight: false,
         }

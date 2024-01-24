@@ -9,18 +9,9 @@ pub struct Pen {
 }
 
 impl Pen {
-    pub fn new(_: (f64, f64)) -> Self {
-        let color = raqote::SolidSource {
-            r: 255,
-            g: 0,
-            b: 0,
-            a: 255,
-        };
+    pub fn new(_: (f64, f64), draw: Draw) -> Self {
         Pen {
-            draw: Draw {
-                style: StrokeStyle::default(),
-                color,
-            },
+            draw,
             lines: Vec::new(),
         }
     }

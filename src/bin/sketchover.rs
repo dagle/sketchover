@@ -3,9 +3,9 @@ use std::rc::Rc;
 
 use calloop::channel::SyncSender;
 use calloop::EventLoop;
-use mlua::{Error, FromLua, Function, IntoLuaMulti, Table, Value};
+use mlua::{Error, FromLua, Function, IntoLua, IntoLuaMulti, Number, Table, Value};
 use mlua::{Lua, UserData, UserDataMethods};
-use raqote::{LineCap, SolidSource, StrokeStyle};
+use raqote::{LineCap, LineJoin, SolidSource, StrokeStyle};
 use sketchover::output::OutPut;
 use sketchover::runtime::Events;
 use sketchover::runtime::Runtime;
@@ -28,7 +28,7 @@ enum Message {
     Pause,
     Unpause,
 
-    Drawing(String, (f64, f64)),
+    Drawing(String, (f64, f64), LuaDraw),
 }
 
 impl LuaBindings {
@@ -37,77 +37,226 @@ impl LuaBindings {
     }
 }
 
-struct LuaDraw(Draw);
+#[derive(Clone, FromLua)]
+struct LuaDraw {
+    color: LuaColor,
+    style: LuaStyle,
+}
 
+impl From<LuaDraw> for Draw {
+    fn from(value: LuaDraw) -> Self {
+        Draw {
+            style: value.style.0,
+            color: value.color.0,
+        }
+    }
+}
+
+impl Default for LuaDraw {
+    fn default() -> Self {
+        let style = LuaStyle::default();
+        let color = LuaColor::default();
+        LuaDraw { color, style }
+    }
+}
+
+impl LuaDraw {
+    pub fn lua_clone<'lua>(&self, value: Value<'lua>) -> mlua::Result<Self> {
+        let d = match value {
+            Value::Nil => self.clone(),
+            Value::Table(t) => {
+                let color = t.get("color").unwrap_or(self.color.clone());
+                let style = t.get("style").unwrap_or(self.style.clone());
+                LuaDraw { color, style }
+            }
+            _ => {
+                return Err(Error::FromLuaConversionError {
+                    from: "string",
+                    to: "LineJoin",
+                    message: None,
+                })
+            }
+        };
+        Ok(d)
+    }
+}
+
+impl UserData for LuaDraw {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("clone", |_, draw, arg| draw.lua_clone(arg));
+    }
+    fn add_fields<'lua, F: mlua::prelude::LuaUserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("color", |_, draw| Ok(draw.color.clone()));
+        fields.add_field_method_get("style", |_, draw| Ok(draw.style.clone()));
+    }
+}
+
+#[derive(Clone, Default, FromLua)]
 struct LuaStyle(StrokeStyle);
 
-impl UserData for LuaStyle {}
+macro_rules! set {
+    ($field:expr, $result:expr) => {
+        if let Ok(value) = $result {
+            $field = value;
+        }
+    };
+}
 
+impl LuaStyle {
+    pub fn lua_clone<'lua>(&self, value: Value<'lua>) -> mlua::Result<Self> {
+        let d = match value {
+            Value::Nil => self.clone(),
+            Value::Table(t) => {
+                let mut style = self.clone();
+
+                set!(style.0.width, t.get("width"));
+
+                set!(style.0.cap, t.get("cap").map(|x: String| read_linecap(&x))?);
+                set!(
+                    style.0.join,
+                    t.get("join").map(|x: String| read_linejoin(&x))?
+                );
+
+                set!(style.0.miter_limit, t.get("miter_limit"));
+                set!(style.0.dash_array, t.get("dash_array"));
+                set!(style.0.dash_offset, t.get("dash_offset"));
+                style
+            }
+            _ => {
+                return Err(Error::FromLuaConversionError {
+                    from: "string",
+                    to: "LineJoin",
+                    message: None,
+                })
+            }
+        };
+        Ok(d)
+    }
+}
+
+impl UserData for LuaStyle {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("clone", |_, style, arg| style.lua_clone(arg));
+    }
+
+    fn add_fields<'lua, F: mlua::prelude::LuaUserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("width", |_, style| Ok(style.0.width));
+        fields.add_field_method_get("cap", |_, style| {
+            let str = match style.0.cap {
+                LineCap::Round => "round",
+                LineCap::Square => "square",
+                LineCap::Butt => "butt",
+            };
+            Ok(str)
+        });
+        fields.add_field_method_get("join", |_, style| {
+            let str = match style.0.join {
+                LineJoin::Round => "round",
+                LineJoin::Miter => "miter",
+                LineJoin::Bevel => "bevel",
+            };
+            Ok(str)
+        });
+        fields.add_field_method_get("miter_limit", |_, style| Ok(style.0.miter_limit));
+        fields.add_field_method_get("dash_array", |_, style| Ok(style.0.dash_array.clone()));
+        fields.add_field_method_get("dash_offset", |_, style| Ok(style.0.dash_offset));
+
+        fields.add_field_method_set("width", |_, style, v: Number| {
+            style.0.width = v as f32;
+            Ok(())
+        });
+        fields.add_field_method_set("cap", |_, style, v: String| {
+            style.0.cap = read_linecap(&v)?;
+            Ok(())
+        });
+        fields.add_field_method_set("join", |_, style, v: String| {
+            style.0.join = read_linejoin(&v)?;
+            Ok(())
+        });
+        fields.add_field_method_set("miter_limit", |_, style, v: Number| {
+            style.0.miter_limit = v as f32;
+            Ok(())
+        });
+        fields.add_field_method_set("dash_array", |_, style, v: Table| {
+            let vec: mlua::Result<Vec<f32>> = v.sequence_values::<f32>().collect();
+            style.0.dash_array = vec?;
+            Ok(())
+        });
+        fields.add_field_method_set("dash_offset", |_, style, v: Number| {
+            style.0.dash_offset = v as f32;
+            Ok(())
+        });
+    }
+}
+
+#[derive(Clone, FromLua)]
 struct LuaColor(SolidSource);
 
-impl UserData for LuaColor {}
+impl LuaColor {
+    pub fn lua_clone<'lua>(&self, value: Value<'lua>) -> mlua::Result<Self> {
+        let d = match value {
+            Value::Nil => self.clone(),
+            Value::Table(t) => {
+                let mut color = self.clone();
 
-// impl<'lua> FromLua<'lua> for LuaDraw {
-//     fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> mlua::prelude::LuaResult<Self> {
-//         match value {
-//             Value::Table(table) => {
-//                 let lstyle = table.get("style")?; // or default
-//                 let lcolor = table.get("color")?; // or default
-//                 let draw = Draw {
-//                     style: lstyle.0;
-//                     color: lcolor.0;
-//                 };
-//                 Ok(LuaDraw(draw))
-//             }
-//             what => todo!(),
-//         }
-//     }
-// }
-// impl<'lua> FromLua<'lua> for LuaStroke {
-//     fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> mlua::prelude::LuaResult<Self> {
-//         match value {
-//             Value::Table(table) => {
-//                 let width = table.get("width")?;
-//                 let cap_str = table.get("cap")?;
-//                 let join_str = table.get("join")?;
-//                 let miter_limit = table.get("miter_limit")?;
-//                 let dash_array = table.get("dash_array")?;
-//                 let dash_offset = table.get("dash_offset")?;
-//                 let solid = StrokeStyle {
-//                     width,
-//                     cap,
-//                     join,
-//                     miter_limit,
-//                     dash_array,
-//                     dash_offset,
-//                 };
-//                 Ok(LuaStroke(solid))
-//             }
-//             what => todo!(),
-//         }
-//     }
-// }
-//
-// impl<'lua> FromLua<'lua> for LuaColor {
-//     fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> mlua::prelude::LuaResult<Self> {
-//         match value {
-//             Value::Table(table) => {
-//                 let red = table.get("r")?;
-//                 let green = table.get("b")?;
-//                 let blue = table.get("g")?;
-//                 let alpha = table.get("a")?;
-//                 let solid = SolidSource {
-//                     r: red,
-//                     g: green,
-//                     b: blue,
-//                     a: alpha,
-//                 };
-//                 Ok(LuaColor(solid))
-//             }
-//             what => todo!(),
-//         }
-//     }
-// }
+                set!(color.0.r, t.get("r"));
+                set!(color.0.g, t.get("g"));
+                set!(color.0.b, t.get("b"));
+                set!(color.0.a, t.get("r"));
+                color
+            }
+            _ => {
+                return Err(Error::FromLuaConversionError {
+                    from: "string",
+                    to: "LineJoin",
+                    message: None,
+                })
+            }
+        };
+        Ok(d)
+    }
+}
+
+impl UserData for LuaColor {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("clone", |_, color, arg| color.lua_clone(arg));
+    }
+    fn add_fields<'lua, F: mlua::prelude::LuaUserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("r", |_, color| Ok(color.0.r));
+        fields.add_field_method_get("g", |_, color| Ok(color.0.g));
+        fields.add_field_method_get("b", |_, color| Ok(color.0.b));
+        fields.add_field_method_get("a", |_, color| Ok(color.0.a));
+
+        fields.add_field_method_set("r", |_, color, v: Number| {
+            color.0.r = v as u8;
+            Ok(())
+        });
+        fields.add_field_method_set("g", |_, color, v: Number| {
+            color.0.g = v as u8;
+            Ok(())
+        });
+        fields.add_field_method_set("b", |_, color, v: Number| {
+            color.0.b = v as u8;
+            Ok(())
+        });
+        fields.add_field_method_set("a", |_, color, v: Number| {
+            color.0.a = v as u8;
+            Ok(())
+        });
+    }
+}
+
+impl Default for LuaColor {
+    fn default() -> Self {
+        let solid = SolidSource {
+            r: 255,
+            b: 0,
+            g: 0,
+            a: 0,
+        };
+        LuaColor(solid)
+    }
+}
 
 struct RuntimeData(Runtime<LuaBindings>);
 
@@ -144,12 +293,15 @@ impl UserData for RuntimeData {
                             Message::Undo => rt.undo(),
                             Message::Unpause => rt.set_pause(false),
                             Message::Pause => rt.set_pause(true),
-                            Message::Drawing(s, pos) => match s.as_ref() {
-                                "pen" => rt.start_drawing(Box::new(Pen::new(pos))),
-                                "rect" => rt.start_drawing(Box::new(Rect::new(pos))),
-                                "line" => rt.start_drawing(Box::new(Line::new(pos))),
-                                _ => panic!("tool doesn't exist"),
-                            },
+                            Message::Drawing(s, pos, draw) => {
+                                let draw = draw.into();
+                                match s.as_ref() {
+                                    "pen" => rt.start_drawing(Box::new(Pen::new(pos, draw))),
+                                    "rect" => rt.start_drawing(Box::new(Rect::new(pos, draw))),
+                                    "line" => rt.start_drawing(Box::new(Line::new(pos, draw))),
+                                    _ => panic!("tool doesn't exist"),
+                                }
+                            }
                         },
                         calloop::channel::Event::Closed => {
                             rt.exit();
@@ -251,12 +403,17 @@ impl UserData for Callback {
             Ok(())
         });
 
-        methods.add_method("draw", |_, cb, (name, table): (String, Table)| {
-            let x = table.get("x")?;
-            let y = table.get("y")?;
-            cb.sender.send(Message::Drawing(name, (x, y))).unwrap();
-            Ok(())
-        });
+        methods.add_method(
+            "draw",
+            |_, cb, (name, table, draw): (String, Table, LuaDraw)| {
+                let x = table.get("x")?;
+                let y = table.get("y")?;
+                cb.sender
+                    .send(Message::Drawing(name, (x, y), draw))
+                    .unwrap();
+                Ok(())
+            },
+        );
     }
 }
 
@@ -311,7 +468,7 @@ where
     let decorated_name = format!("sketchover-event-{}", name);
     let tbl: mlua::Value = lua.named_registry_value(&decorated_name)?;
     match tbl {
-        mlua::Value::Table(tbl) => {
+        Value::Table(tbl) => {
             for func in tbl.sequence_values::<mlua::Function>() {
                 let func = func?;
                 return func.call(args);
@@ -388,6 +545,22 @@ fn read_linecap(m: &str) -> mlua::Result<LineCap> {
     Ok(res)
 }
 
+fn read_linejoin(m: &str) -> mlua::Result<LineJoin> {
+    let res = match m {
+        "round" => LineJoin::Round,
+        "square" => LineJoin::Miter,
+        "butt" => LineJoin::Bevel,
+        v => {
+            return Err(Error::FromLuaConversionError {
+                from: "string",
+                to: "LineJoin",
+                message: Some(v.to_owned()),
+            })
+        }
+    };
+    Ok(res)
+}
+
 pub fn get_or_create_module<'lua>(lua: &'lua Lua, name: &str) -> mlua::Result<()> {
     let globals = lua.globals();
     let package: Table = globals.get("package")?;
@@ -397,54 +570,25 @@ pub fn get_or_create_module<'lua>(lua: &'lua Lua, name: &str) -> mlua::Result<()
     match module {
         Value::Nil => {
             let table = lua.create_table()?;
-            // let draw = lua.create_function(|lua, table: Table| {
-            //     // let lstyle: LuaStyle = table.get("style")?; // or default
-            //     let lcolor = table.get("color")?; // or default
-            //     let draw = Draw {
-            //         style: lstyle.0,
-            //         color: lcolor.0,
-            //     };
-            //     Ok(LuaDraw(draw))
-            // });
-            // let style = lua.create_function(|lua, table: Table| {
-            //     let width = table.get("width")?;
-            //     let cap_str: String = table.get("cap")?;
-            //     let join_str: String = table.get("join")?;
-            //     let miter_limit = table.get("miter_limit")?;
-            //     let dash_array = table.get("dash_array")?;
-            //     let dash_offset = table.get("dash_offset")?;
-            //     let solid = StrokeStyle {
-            //         width,
-            //         cap,
-            //         join,
-            //         miter_limit,
-            //         dash_array,
-            //         dash_offset,
-            //     };
-            //     Ok(LuaStyle(solid))
-            // });
-            let draw = todo!();
-            let style = todo!();
-            let color = lua.create_function(|lua, table: Table| {
-                let red = table.get("r")?;
-                let green = table.get("b")?;
-                let blue = table.get("g")?;
-                let alpha = table.get("a")?;
-                let solid = SolidSource {
-                    r: red,
-                    g: green,
-                    b: blue,
-                    a: alpha,
-                };
-                Ok(LuaColor(solid))
+            let draw = lua.create_function(|_, value: Value| {
+                let d = LuaDraw::default();
+                d.lua_clone(value)
             })?;
-            // table.set("Draw", draw);
-            // table.set("Style", style);
-            table.set("Color", color);
+            let style = lua.create_function(|_, value: Value| {
+                let s = LuaStyle::default();
+                s.lua_clone(value)
+            })?;
+            let color = lua.create_function(|_, value: Value| {
+                let c = LuaColor::default();
+                c.lua_clone(value)
+            })?;
+            table.set("Draw", draw)?;
+            table.set("Style", style)?;
+            table.set("Color", color)?;
             loaded.set(name, table)?;
             Ok(())
         }
-        Value::UserData(_) => Ok(()),
+        Value::Table(_) => Ok(()),
         wat => todo!(),
         // wat => anyhow::bail!(
         //     "cannot register module {} as package.loaded.{} is already set to a value of type {}",

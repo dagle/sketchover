@@ -1,5 +1,5 @@
 Core:
-- [?] Draw should take a style, so we can specify the style and update it.
+- [x] Draw should take a style, so we can specify the style and update it.
 
 - [ ] output should have an api easier to work with, atm callbacks are useless?
 

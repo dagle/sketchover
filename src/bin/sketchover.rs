@@ -3,9 +3,9 @@ use std::rc::Rc;
 
 use calloop::channel::SyncSender;
 use calloop::EventLoop;
-use mlua::{FromLua, Function, IntoLuaMulti, Table, Value};
+use mlua::{Error, FromLua, Function, IntoLuaMulti, Table, Value};
 use mlua::{Lua, UserData, UserDataMethods};
-use raqote::{SolidSource, StrokeStyle};
+use raqote::{LineCap, SolidSource, StrokeStyle};
 use sketchover::output::OutPut;
 use sketchover::runtime::Events;
 use sketchover::runtime::Runtime;
@@ -38,8 +38,14 @@ impl LuaBindings {
 }
 
 struct LuaDraw(Draw);
-struct LuaStroke(StrokeStyle);
+
+struct LuaStyle(StrokeStyle);
+
+impl UserData for LuaStyle {}
+
 struct LuaColor(SolidSource);
+
+impl UserData for LuaColor {}
 
 // impl<'lua> FromLua<'lua> for LuaDraw {
 //     fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> mlua::prelude::LuaResult<Self> {
@@ -61,7 +67,7 @@ struct LuaColor(SolidSource);
 //     fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> mlua::prelude::LuaResult<Self> {
 //         match value {
 //             Value::Table(table) => {
-//                 let width = table.get("width")?; 
+//                 let width = table.get("width")?;
 //                 let cap_str = table.get("cap")?;
 //                 let join_str = table.get("join")?;
 //                 let miter_limit = table.get("miter_limit")?;
@@ -366,7 +372,23 @@ pub fn get_or_create_runtime(lua: Rc<Lua>, name: &str) -> anyhow::Result<()> {
     }
 }
 
-pub fn get_or_create_module(lua: &'lua Lua, name: &str) -> anyhow::Result<()> {
+fn read_linecap(m: &str) -> mlua::Result<LineCap> {
+    let res = match m {
+        "round" => LineCap::Round,
+        "square" => LineCap::Square,
+        "butt" => LineCap::Butt,
+        v => {
+            return Err(Error::FromLuaConversionError {
+                from: "string",
+                to: "LineCap",
+                message: Some(v.to_owned()),
+            })
+        }
+    };
+    Ok(res)
+}
+
+pub fn get_or_create_module<'lua>(lua: &'lua Lua, name: &str) -> mlua::Result<()> {
     let globals = lua.globals();
     let package: Table = globals.get("package")?;
     let loaded: Table = package.get("loaded")?;
@@ -375,32 +397,34 @@ pub fn get_or_create_module(lua: &'lua Lua, name: &str) -> anyhow::Result<()> {
     match module {
         Value::Nil => {
             let table = lua.create_table()?;
-            let draw = lua.create_function(|lua, table: Table| {
-                let lstyle = table.get("style")?; // or default
-                let lcolor = table.get("color")?; // or default
-                let draw = Draw {
-                    style: lstyle.0;
-                    color: lcolor.0;
-                };
-                Ok(LuaDraw(draw))
-            };
-            let style = lua.create_function(|lua, table: Table| {
-                let width = table.get("width")?;
-                let cap_str = table.get("cap")?;
-                let join_str = table.get("join")?;
-                let miter_limit = table.get("miter_limit")?;
-                let dash_array = table.get("dash_array")?;
-                let dash_offset = table.get("dash_offset")?;
-                let solid = StrokeStyle {
-                    width,
-                    cap,
-                    join,
-                    miter_limit,
-                    dash_array,
-                    dash_offset,
-                };
-                Ok(LuaStroke(solid))
-            };
+            // let draw = lua.create_function(|lua, table: Table| {
+            //     // let lstyle: LuaStyle = table.get("style")?; // or default
+            //     let lcolor = table.get("color")?; // or default
+            //     let draw = Draw {
+            //         style: lstyle.0,
+            //         color: lcolor.0,
+            //     };
+            //     Ok(LuaDraw(draw))
+            // });
+            // let style = lua.create_function(|lua, table: Table| {
+            //     let width = table.get("width")?;
+            //     let cap_str: String = table.get("cap")?;
+            //     let join_str: String = table.get("join")?;
+            //     let miter_limit = table.get("miter_limit")?;
+            //     let dash_array = table.get("dash_array")?;
+            //     let dash_offset = table.get("dash_offset")?;
+            //     let solid = StrokeStyle {
+            //         width,
+            //         cap,
+            //         join,
+            //         miter_limit,
+            //         dash_array,
+            //         dash_offset,
+            //     };
+            //     Ok(LuaStyle(solid))
+            // });
+            let draw = todo!();
+            let style = todo!();
             let color = lua.create_function(|lua, table: Table| {
                 let red = table.get("r")?;
                 let green = table.get("b")?;
@@ -413,20 +437,21 @@ pub fn get_or_create_module(lua: &'lua Lua, name: &str) -> anyhow::Result<()> {
                     a: alpha,
                 };
                 Ok(LuaColor(solid))
-            };
-            table.set("Draw", draw);
-            table.set("Style", style);
+            })?;
+            // table.set("Draw", draw);
+            // table.set("Style", style);
             table.set("Color", color);
             loaded.set(name, table)?;
             Ok(())
         }
         Value::UserData(_) => Ok(()),
-        wat => anyhow::bail!(
-            "cannot register module {} as package.loaded.{} is already set to a value of type {}",
-            name,
-            name,
-            wat.type_name()
-        ),
+        wat => todo!(),
+        // wat => anyhow::bail!(
+        //     "cannot register module {} as package.loaded.{} is already set to a value of type {}",
+        //     name,
+        //     name,
+        //     wat.type_name()
+        // ),
     }
 }
 
@@ -434,7 +459,7 @@ pub fn make_lua_context(config_file: &Path) -> anyhow::Result<()> {
     let lua = Rc::new(Lua::new());
 
     get_or_create_runtime(lua.clone(), "sketchover")?;
-    get_or_create_module(lua.clone(), "sketchover.draw")?;
+    get_or_create_module(&lua, "sketchover.draw")?;
     let path = format!(
         "package.path = package.path .. ';{}?.lua;'",
         config_file.to_str().unwrap()

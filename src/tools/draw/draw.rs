@@ -4,7 +4,7 @@
 
 use core::fmt;
 
-use raqote::{LineCap, LineJoin, StrokeStyle};
+use raqote::{LineCap, LineJoin, SolidSource, StrokeStyle};
 use serde::{
     de::{self, MapAccess, SeqAccess, Visitor},
     ser::SerializeStruct,
@@ -14,8 +14,24 @@ use serde::{
 #[derive(Clone, PartialEq, Debug)]
 pub struct Draw {
     pub style: StrokeStyle,
-    pub color: raqote::SolidSource,
+    pub color: SolidSource,
     // pub distance: bool,
+}
+
+impl Default for Draw {
+    fn default() -> Self {
+        let style = StrokeStyle::default();
+        let solid = SolidSource {
+            r: 255,
+            b: 0,
+            g: 0,
+            a: 0,
+        };
+        Draw {
+            style,
+            color: solid,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Debug)]

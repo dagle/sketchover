@@ -2,14 +2,16 @@ Core:
 - [x] Draw should take a style, so we can specify the style and update it.
 
 - [ ] output should have an api easier to work with, atm callbacks are useless?
+-- [x] we want to be able identify the screen
+-- [?] we want to be able to get an "handle" from an id
+-- [?] we want to be able to save a screen.
+- we want to be able to control if it's a drawing area?
 
 Runtime:
 - [?] Make it possible to bind thing to the mouse wheel.
 -- Descrete scrolling not done
 
 - When pausing the colors get stronger, doing a partial rendering would fix this
-
-- [-] Add a setfg/unsetfg function that sets the foreground
 
 - Fix scale factor and rotation for outputs, we need to detect if the
   screen needs scaling etc

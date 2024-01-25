@@ -50,6 +50,7 @@ pub struct OutPut {
     pub screencopy: Option<ScreenCopy>,
 }
 
+// do not use json
 impl Serialize for OutPut {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -105,7 +106,7 @@ impl OutPut {
     }
 
     pub fn name(&self) -> String {
-        "TODO!".to_owned()
+        self.info.name.clone().unwrap_or("".to_owned())
     }
 }
 

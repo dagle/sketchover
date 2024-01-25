@@ -13,7 +13,9 @@ use sketchover::tools::draw::draw::Draw;
 use sketchover::tools::draw::line::Line;
 use sketchover::tools::draw::pen::Pen;
 use sketchover::tools::draw::rekt::Rect;
+use smithay_client_toolkit::output::OutputInfo;
 use smithay_client_toolkit::seat::keyboard::{KeyEvent, Modifiers};
+use wayland_client::protocol::wl_output::{Subpixel, Transform};
 use xdg::BaseDirectories;
 
 struct LuaBindings {
@@ -28,6 +30,8 @@ enum Message {
     Pause,
     Unpause,
 
+    SetFg(SolidSource),
+    StopDraw,
     Drawing(String, (f64, f64), Draw),
 }
 
@@ -79,6 +83,8 @@ impl UserData for RuntimeData {
                             Message::Undo => rt.undo(),
                             Message::Unpause => rt.set_pause(false),
                             Message::Pause => rt.set_pause(true),
+                            Message::SetFg(solid) => rt.set_fg(solid),
+                            Message::StopDraw => rt.stop_drawing(),
                             Message::Drawing(s, pos, draw) => match s.as_ref() {
                                 "pen" => rt.start_drawing(Box::new(Pen::new(pos, draw))),
                                 "rect" => rt.start_drawing(Box::new(Rect::new(pos, draw))),
@@ -102,6 +108,7 @@ impl UserData for RuntimeData {
 struct LuaKeyEvent {
     modifiers: Modifiers,
     key: KeyEvent,
+    pos: (f64, f64),
 }
 
 impl UserData for LuaKeyEvent {
@@ -113,6 +120,12 @@ impl UserData for LuaKeyEvent {
             table.set("alt", event.modifiers.ctrl)?;
             table.set("shift", event.modifiers.ctrl)?;
             table.set("caps_lock", event.modifiers.ctrl)?;
+            Ok(table)
+        });
+        fields.add_field_method_get("pos", |lua, event| {
+            let table = lua.create_table()?;
+            table.set("x", event.pos.0)?;
+            table.set("y", event.pos.1)?;
             Ok(table)
         });
     }
@@ -142,7 +155,6 @@ impl UserData for MouseEvent {
             Ok(Value::String(k))
         });
         fields.add_field_method_get("pos", |lua, event| {
-            //
             let table = lua.create_table()?;
             table.set("x", event.pos.0)?;
             table.set("y", event.pos.1)?;
@@ -185,6 +197,22 @@ impl UserData for Callback {
             cb.sender.send(Message::Unpause).unwrap();
             Ok(())
         });
+        methods.add_method("set_fg", |_, cb, value: Value| {
+            let mut color = SolidSource {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            };
+            lua_color(&mut color, value)?;
+            cb.sender.send(Message::SetFg(color)).unwrap();
+            Ok(())
+        });
+
+        methods.add_method("stop_draw", |_, cb, ()| {
+            cb.sender.send(Message::StopDraw).unwrap();
+            Ok(())
+        });
 
         methods.add_method(
             "draw",
@@ -201,29 +229,106 @@ impl UserData for Callback {
     }
 }
 
-impl Events for LuaBindings {
-    fn new_output(r: &mut Runtime<Self>, ouput: &mut OutPut) {
-        let lua = &r.data.lua.clone();
-        let globals = r.data.lua.globals();
+struct LuaOutPut(OutputInfo);
 
-        // emit_sync_callback(lua, ("new_output".to_owned(), args));
+impl UserData for LuaOutPut {
+    fn add_fields<'lua, F: mlua::prelude::LuaUserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("id", |_, info| Ok(info.0.id));
+        fields.add_field_method_get("name", |_, info| Ok(info.0.name.clone()));
+        fields.add_field_method_get("model", |_, info| Ok(info.0.model.clone()));
+        fields.add_field_method_get("make", |_, info| Ok(info.0.make.clone()));
+        fields.add_field_method_get("location", |lua, info| {
+            let table = lua.create_table()?;
+            table.set(1, info.0.location.0)?;
+            table.set(2, info.0.location.1)?;
+            Ok(table)
+        });
+        fields.add_field_method_get("physical_size", |lua, info| {
+            let table = lua.create_table()?;
+            table.set(1, info.0.physical_size.0)?;
+            table.set(2, info.0.physical_size.1)?;
+            Ok(table)
+        });
+        fields.add_field_method_get("subpixel", |_, info| {
+            let str = match info.0.subpixel {
+                Subpixel::Unknown => "unknown",
+                Subpixel::None => "none",
+                Subpixel::HorizontalRgb => "HorizontalRgb",
+                Subpixel::HorizontalBgr => "HorizontalBgr",
+                Subpixel::VerticalRgb => "VerticalRgb",
+                Subpixel::VerticalBgr => "VerticalBgr",
+                _ => todo!(),
+            };
+            Ok(str.to_owned())
+        });
+        fields.add_field_method_get("transform", |_, info| {
+            let str = match info.0.transform {
+                Transform::Normal => "normal",
+                Transform::_90 => "90",
+                Transform::_180 => "180",
+                Transform::_270 => "270",
+                Transform::Flipped => "flipped",
+                Transform::Flipped90 => "flipped90",
+                Transform::Flipped180 => "flipped180",
+                Transform::Flipped270 => "flipped180",
+                _ => todo!(),
+            };
+            Ok(str.to_owned())
+        });
+        fields.add_field_method_get("scale_facor", |_, info| Ok(info.0.scale_factor));
+        // fields.add_field_method_get("modes", |_, info| Ok(info.0.make.clone()));
+        fields.add_field_method_get("logical_position", |lua, info| {
+            match info.0.logical_position {
+                None => Ok(Value::Nil),
+                Some(p) => {
+                    let table = lua.create_table()?;
+                    table.set(1, p.0)?;
+                    table.set(2, p.1)?;
+                    Ok(Value::Table(table))
+                }
+            }
+        });
+        fields.add_field_method_get("logical_size", |lua, info| match info.0.logical_size {
+            None => Ok(Value::Nil),
+            Some(p) => {
+                let table = lua.create_table()?;
+                table.set(1, p.0)?;
+                table.set(2, p.1)?;
+                Ok(Value::Table(table))
+            }
+        });
+        fields.add_field_method_get("description", |_, info| Ok(info.0.description.clone()));
+    }
+}
+
+impl Events for LuaBindings {
+    fn new_output(r: &mut Runtime<Self>, output: &mut OutPut) {
+        let lua = &r.data.lua.clone();
+
+        let args = LuaOutPut(output.info.clone());
+
+        emit_sync_callback(lua, ("new_output".to_owned(), args)).expect("callback failed");
     }
 
-    fn keybinding(r: &mut Runtime<Self>, event: KeyEvent) {
+    fn keybinding(r: &mut Runtime<Self>, event: KeyEvent, press: bool) {
         let lua = &r.data.lua.clone();
         let modifiers = r.modifiers();
+        let pos = r.pos();
 
         let args = LuaKeyEvent {
             modifiers,
             key: event,
+            pos,
         };
+
         let cb = Callback {
             sender: r.data.sender.as_ref().unwrap().clone(),
         };
 
-        emit_sync_callback(lua, ("keypress".to_owned(), (cb, args))).expect("callback failed");
+        emit_sync_callback(lua, ("keypress".to_owned(), (cb, args, press)))
+            .expect("callback failed");
     }
-    fn mousebinding(r: &mut Runtime<Self>, button: u32) {
+    fn mousebinding(r: &mut Runtime<Self>, button: u32, press: bool) {
         let lua = &r.data.lua.clone();
         let modifiers = r.modifiers();
         let pos = r.pos();
@@ -238,7 +343,8 @@ impl Events for LuaBindings {
         };
 
         // r.start_drawing(Box::new(Pen::new()));
-        emit_sync_callback(lua, ("mousepress".to_owned(), (cb, args))).expect("callback failed");
+        emit_sync_callback(lua, ("mousepress".to_owned(), (cb, args, press)))
+            .expect("callback failed");
     }
 }
 pub fn table_to_draw<'lua>(table: Table<'lua>) -> mlua::Result<Draw> {

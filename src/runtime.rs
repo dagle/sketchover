@@ -40,17 +40,16 @@ use crate::tools::Tool;
 
 pub trait Events {
     fn init(&mut self) {}
-    // type Item;
-    // fn new_output(&self, runtime: &Runtime<Self::Item>);
+
     fn new_output(r: &mut Runtime<Self>, output: &mut OutPut)
     where
         Self: Sized;
 
-    fn keybinding(r: &mut Runtime<Self>, event: KeyEvent)
+    fn keybinding(r: &mut Runtime<Self>, event: KeyEvent, press: bool)
     where
         Self: Sized;
 
-    fn mousebinding(r: &mut Runtime<Self>, event: u32)
+    fn mousebinding(r: &mut Runtime<Self>, event: u32, press: bool)
     where
         Self: Sized;
 }
@@ -79,7 +78,6 @@ pub struct Runtime<D> {
     // theming, can we do these without
     // 400 different setters
     bgcolor: raqote::SolidSource,
-    color: raqote::SolidSource,
 
     current_output: Option<usize>,
     outputs: Vec<OutPut>,
@@ -103,19 +101,10 @@ impl<D: Events + 'static> Runtime<D> {
             a: 0,
         };
 
-        // red is the default, for now
-        let color = raqote::SolidSource {
-            r: 255,
-            g: 0,
-            b: 0,
-            a: 255,
-        };
-
         let runtime = Runtime {
             data,
             wl_runtime: None,
             bgcolor,
-            color,
             current_output: None,
             outputs: Vec::new(),
             drawing: false,
@@ -139,14 +128,12 @@ impl<D: Events + 'static> Runtime<D> {
 
         let seat_state = SeatState::new(&globals, &qh);
 
-        // We don't need this one atm but we will the future to set the set the cursor icon
         let compositor_state =
             CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
         let layer_shell = LayerShell::bind(&globals, &qh).expect("Layer shell is not available");
 
         let shm = Shm::bind(&globals, &qh).expect("wl_shm is not available");
 
-        // let mut event_loop = EventLoop::try_new().expect("couldn't create event-loop");
         let loop_handle = event_loop.handle();
 
         WaylandSource::new(conn.clone(), event_queue)
@@ -173,8 +160,6 @@ impl<D: Events + 'static> Runtime<D> {
         event_loop
             .run(None, self, |_| {})
             .expect("Eventloop failed");
-
-        // self.wl_runtime = None;
     }
 
     pub fn output(&self, surface: &wl_surface::WlSurface) -> Option<usize> {
@@ -191,8 +176,8 @@ impl<D: Events + 'static> Runtime<D> {
         self.last_pos.unwrap_or((0.0, 0.0))
     }
 
-    pub fn set_drawing(&mut self, enable: bool) {
-        self.drawing = enable;
+    pub fn stop_drawing(&mut self) {
+        self.drawing = false;
     }
 
     pub fn start_drawing(&mut self, tool: Box<dyn Tool>) {
@@ -221,6 +206,7 @@ impl<D: Events + 'static> Runtime<D> {
         }
     }
 
+    // optional oid?
     pub fn undo(&mut self) {
         if let Some(idx) = self.current_output {
             let output = &mut self.outputs[idx];
@@ -228,19 +214,7 @@ impl<D: Events + 'static> Runtime<D> {
         }
     }
 
-    // pub fn set_distance(&mut self) {
-    //
-    // }
-    // pub fn unset_distance(&mut self) {
-    //
-    // }
-
-    pub fn increase_size(&mut self) {}
-
-    pub fn set_color(&mut self, color: raqote::SolidSource) {
-        self.color = color;
-    }
-
+    // optional oid?
     pub fn set_passthrough(&mut self, enable: bool) {
         // TODO: a way to specify the monitor
         for output in self.outputs.iter_mut() {
@@ -252,6 +226,16 @@ impl<D: Events + 'static> Runtime<D> {
         self.bgcolor = color;
     }
 
+    fn locate_output(&self, id: u32) -> Option<&OutPut> {
+        for output in self.outputs.iter() {
+            if output.info.id == id {
+                return Some(output);
+            }
+        }
+        None
+    }
+
+    // optional oid?
     pub fn set_pause(&mut self, pause: bool) {
         if let Some(idx) = self.current_output {
             let current = self.outputs.get_mut(idx).unwrap();
@@ -261,6 +245,7 @@ impl<D: Events + 'static> Runtime<D> {
         }
     }
 
+    // optional oid?
     pub fn save(&mut self, path: &str) -> Result<(), Box<dyn error::Error>> {
         let file = File::create(path)?;
         serde_json::to_writer(file, &self.outputs)?;
@@ -552,17 +537,17 @@ impl<D: Events + 'static> SeatHandler for Runtime<D> {
         _: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        let mut rt = runtime!(self);
-        if capability == Capability::Keyboard && rt.keyboard.is_some() {
-            rt.keyboard.take().unwrap().release();
+        let state = runtime!(self);
+        if capability == Capability::Keyboard && state.keyboard.is_some() {
+            state.keyboard.take().unwrap().release();
         }
 
-        if capability == Capability::Pointer && rt.pointer.is_some() {
-            rt.pointer.take().unwrap().release();
+        if capability == Capability::Pointer && state.pointer.is_some() {
+            state.pointer.take().unwrap().release();
         }
 
-        if capability == Capability::Pointer && rt.themed_pointer.is_some() {
-            rt.themed_pointer.take().unwrap().pointer().release();
+        if capability == Capability::Pointer && state.themed_pointer.is_some() {
+            state.themed_pointer.take().unwrap().pointer().release();
         }
     }
 
@@ -585,7 +570,7 @@ impl<D: Events + 'static> KeyboardHandler for Runtime<D> {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _: &wl_keyboard::WlKeyboard,
-        _: u32,
+        id: u32,
         event: KeyEvent,
     ) {
         // Esc is hardcoded
@@ -593,8 +578,7 @@ impl<D: Events + 'static> KeyboardHandler for Runtime<D> {
             self.exit();
             return;
         }
-
-        D::keybinding(self, event);
+        D::keybinding(self, event, true);
     }
 
     fn release_key(
@@ -603,11 +587,9 @@ impl<D: Events + 'static> KeyboardHandler for Runtime<D> {
         _: &QueueHandle<Self>,
         _: &wl_keyboard::WlKeyboard,
         _: u32,
-        _event: KeyEvent,
+        event: KeyEvent,
     ) {
-        // Is checking that the key isn't a modifier enough?
-        // or should we have save a key that triggered it?
-        self.drawing = false;
+        D::keybinding(self, event, false);
     }
 
     fn update_modifiers(
@@ -684,12 +666,12 @@ impl<D: Events + 'static> PointerHandler for Runtime<D> {
                 }
                 Press { button, serial, .. } => {
                     if self.last_serial.map_or(true, |s| s != serial) {
-                        D::mousebinding(self, button);
+                        D::mousebinding(self, button, true);
                     }
                     self.last_serial = Some(serial);
                 }
-                Release { .. } => {
-                    self.drawing = false;
+                Release { button, .. } => {
+                    D::mousebinding(self, button, false);
                 }
                 Axis {
                     horizontal,

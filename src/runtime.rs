@@ -1,6 +1,3 @@
-use std::error;
-use std::fs::File;
-
 use calloop::{EventLoop, LoopSignal};
 use cursor_icon::CursorIcon;
 use smithay_client_toolkit::compositor::CompositorHandler;
@@ -39,11 +36,21 @@ use crate::output::{Buffers, OutPut};
 use crate::tools::Tool;
 
 pub trait Events {
-    fn init(&mut self) {}
+    fn init(_r: &mut Runtime<Self>)
+    where
+        Self: Sized,
+    {
+    }
 
     fn new_output(r: &mut Runtime<Self>, output: &mut OutPut)
     where
         Self: Sized;
+
+    fn destroy_output(_r: &mut Runtime<Self>, _output_id: u32)
+    where
+        Self: Sized,
+    {
+    }
 
     fn keybinding(r: &mut Runtime<Self>, event: KeyEvent, press: bool)
     where
@@ -77,8 +84,6 @@ pub struct Runtime<D> {
 
     // theming, can we do these without
     // 400 different setters
-    bgcolor: raqote::SolidSource,
-
     current_output: Option<usize>,
     outputs: Vec<OutPut>,
 
@@ -94,17 +99,9 @@ pub struct Runtime<D> {
 // impl<D: Bindable> Runtime<D> {
 impl<D: Events + 'static> Runtime<D> {
     pub fn init(data: D) -> Runtime<D> {
-        let bgcolor = raqote::SolidSource {
-            r: 0,
-            g: 0,
-            b: 0,
-            a: 0,
-        };
-
         let runtime = Runtime {
             data,
             wl_runtime: None,
-            bgcolor,
             current_output: None,
             outputs: Vec::new(),
             drawing: false,
@@ -193,6 +190,7 @@ impl<D: Events + 'static> Runtime<D> {
         }
     }
 
+    // TODO: Remove
     pub fn clear(&mut self, all: bool) {
         if all {
             for output in self.outputs.iter_mut() {
@@ -207,50 +205,53 @@ impl<D: Events + 'static> Runtime<D> {
     }
 
     // optional oid?
+    // TODO: Remove
     pub fn undo(&mut self) {
         if let Some(idx) = self.current_output {
             let output = &mut self.outputs[idx];
             output.draws.pop();
         }
     }
-
-    // optional oid?
-    pub fn set_passthrough(&mut self, enable: bool) {
-        // TODO: a way to specify the monitor
+    pub fn locate_output(&mut self, id: u32) -> Option<&mut OutPut> {
         for output in self.outputs.iter_mut() {
-            output.set_enable(enable);
-        }
-    }
-
-    pub fn set_fg(&mut self, color: raqote::SolidSource) {
-        self.bgcolor = color;
-    }
-
-    fn locate_output(&self, id: u32) -> Option<&OutPut> {
-        for output in self.outputs.iter() {
             if output.info.id == id {
                 return Some(output);
             }
         }
         None
     }
-
-    // optional oid?
-    pub fn set_pause(&mut self, pause: bool) {
-        if let Some(idx) = self.current_output {
-            let current = self.outputs.get_mut(idx).unwrap();
-            if let Some(ref rt) = self.wl_runtime {
-                current.set_screen_copy(&rt.conn, &rt.globals, &rt.shm, pause);
+    pub fn locate_output_idx(&mut self, id: u32) -> Option<usize> {
+        for (i, output) in self.outputs.iter_mut().enumerate() {
+            if output.info.id == id {
+                return Some(i);
             }
         }
+        None
     }
 
-    // optional oid?
-    pub fn save(&mut self, path: &str) -> Result<(), Box<dyn error::Error>> {
-        let file = File::create(path)?;
-        serde_json::to_writer(file, &self.outputs)?;
-        Ok(())
+    // TODO: Remove
+    // pub fn set_passthrough(&mut self, enable: bool) {
+    //     for output in self.outputs.iter_mut() {
+    //         output.set_enable(enable);
+    //     }
+    // }
+
+    pub fn set_pause(&mut self, pause: bool, id: u32) {
+        // remove unwraps
+        let idx = self.locate_output_idx(id).unwrap();
+        let output = self.outputs.get_mut(idx).unwrap();
+        if let Some(ref rt) = self.wl_runtime {
+            output.set_screen_copy(&rt.conn, &rt.globals, &rt.shm, pause);
+        }
+        // }
     }
+
+    // TODO: Remove
+    // pub fn save(&mut self, path: &str) -> Result<(), Box<dyn error::Error>> {
+    //     let file = File::create(path)?;
+    //     serde_json::to_writer(file, &self.outputs)?;
+    //     Ok(())
+    // }
 
     fn draw(&mut self, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface) {
         if let Some(output) = self
@@ -286,7 +287,7 @@ impl<D: Events + 'static> Runtime<D> {
             );
 
             if output.screencopy.is_none() {
-                dt.clear(self.bgcolor);
+                dt.clear(output.fgcolor);
             }
 
             // println!("out: {}", output.draws.len());
@@ -408,28 +409,21 @@ impl<D: Events + 'static> OutputHandler for Runtime<D> {
             .expect("Failed to create pool");
 
         let buffers = Buffers::new(&mut pool, width, height, wl_shm::Format::Argb8888);
+        let mut output = OutPut::new(output, width, height, info, pool, layer);
 
-        // TODO: Add this again
-        // let draws = if let Some(ref mut saved) = self.saved {
-        //     output::restore(saved, &info)
-        // } else {
-        //     Vec::new()
+        // let mut output = OutPut {
+        //     output,
+        //     width,
+        //     height,
+        //     info,
+        //     pool,
+        //     layer,
+        //     buffers,
+        //     configured: false,
+        //     draws,
+        //     screencopy: None,
+        //     interactivity: KeyboardInteractivity::Exclusive,
         // };
-        let draws = Vec::new();
-
-        let mut output = OutPut {
-            output,
-            width,
-            height,
-            info,
-            pool,
-            layer,
-            buffers,
-            configured: false,
-            draws,
-            screencopy: None,
-            interactivity: KeyboardInteractivity::Exclusive,
-        };
 
         D::new_output(self, &mut output);
         self.outputs.push(output);
@@ -452,6 +446,7 @@ impl<D: Events + 'static> OutputHandler for Runtime<D> {
         output: wl_output::WlOutput,
     ) {
         if let Some(index) = self.outputs.iter().position(|o| o.output == output) {
+            D::destroy_output(self, self.outputs[index].info.id);
             self.outputs.remove(index);
             if self.current_output.map(|i| i == index).unwrap_or(false) {
                 self.current_output = None;

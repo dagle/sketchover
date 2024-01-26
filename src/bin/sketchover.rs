@@ -24,13 +24,14 @@ struct LuaBindings {
 }
 
 enum Message {
-    Clear,
+    Clear(u32),
     Quit,
-    Undo,
-    Pause,
-    Unpause,
+    Undo(u32),
+    Pause(u32),
+    Unpause(u32),
+    Save(u32),
 
-    SetFg(SolidSource),
+    SetFg(SolidSource, u32),
     StopDraw,
     Drawing(String, (f64, f64), Draw),
 }
@@ -52,12 +53,20 @@ struct RuntimeData(Runtime<LuaBindings>);
 
 impl UserData for RuntimeData {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_function("init", |lua, func: Function| {
+            register_event(lua, ("init".to_owned(), func))?;
+            Ok(())
+        });
         methods.add_function("keypress", |lua, func: Function| {
             register_event(lua, ("keypress".to_owned(), func))?;
             Ok(())
         });
         methods.add_function("new_output", |lua, func: Function| {
             register_event(lua, ("new_output".to_owned(), func))?;
+            Ok(())
+        });
+        methods.add_function("destroy_output", |lua, func: Function| {
+            register_event(lua, ("destroy_output".to_owned(), func))?;
             Ok(())
         });
         methods.add_function("mousepress", |lua, func: Function| {
@@ -78,12 +87,26 @@ impl UserData for RuntimeData {
                     receiver,
                     |event, _, rt: &mut Runtime<LuaBindings>| match event {
                         calloop::channel::Event::Msg(m) => match m {
-                            Message::Clear => rt.clear(true),
+                            Message::Clear(id) => {
+                                let output = rt.locate_output(id).unwrap();
+                                output.clear();
+                            }
                             Message::Quit => rt.exit(),
-                            Message::Undo => rt.undo(),
-                            Message::Unpause => rt.set_pause(false),
-                            Message::Pause => rt.set_pause(true),
-                            Message::SetFg(solid) => rt.set_fg(solid),
+                            Message::Undo(id) => {
+                                println!("{:?}", id);
+                                // let output = rt.locate_output(id).unwrap();
+                                // output.undo();
+                            }
+                            Message::Unpause(id) => rt.set_pause(false, id),
+                            Message::Pause(id) => rt.set_pause(true, id),
+                            Message::SetFg(solid, id) => {
+                                let output = rt.locate_output(id).unwrap();
+                                output.set_fg(solid);
+                            }
+                            Message::Save(id) => {
+                                let output = rt.locate_output(id).unwrap();
+                                output.save("sketchover");
+                            }
                             Message::StopDraw => rt.stop_drawing(),
                             Message::Drawing(s, pos, draw) => match s.as_ref() {
                                 "pen" => rt.start_drawing(Box::new(Pen::new(pos, draw))),
@@ -173,6 +196,28 @@ impl UserData for MouseEvent {
 
 struct Callback {
     sender: Rc<SyncSender<Message>>,
+    screen_id: Option<u32>,
+}
+
+impl Callback {
+    fn screen_id(&self, value: Value) -> mlua::Result<u32> {
+        match value {
+            Value::Nil => {
+                if let Some(id) = self.screen_id {
+                    Ok(id)
+                } else {
+                    Err(Error::RuntimeError(
+                        "No active screen and no screen chosen".to_owned(),
+                    ))
+                }
+            }
+            Value::Number(n) => Ok(n as u32),
+            wat => Err(Error::RuntimeError(format!(
+                "Expected number or nil, got: {}",
+                wat.type_name()
+            ))),
+        }
+    }
 }
 
 impl UserData for Callback {
@@ -181,31 +226,44 @@ impl UserData for Callback {
             cb.sender.send(Message::Quit).unwrap();
             Ok(())
         });
-        methods.add_method("clear", |_, cb, ()| {
-            cb.sender.send(Message::Clear).unwrap();
+        methods.add_method("clear", |_, cb, value| {
+            let id = cb.screen_id(value)?;
+            cb.sender.send(Message::Clear(id)).unwrap();
             Ok(())
         });
-        methods.add_method("undo", |_, cb, ()| {
-            cb.sender.send(Message::Undo).unwrap();
+        methods.add_method("undo", |_, cb, value| {
+            let id = cb.screen_id(value)?;
+            cb.sender.send(Message::Undo(id)).unwrap();
             Ok(())
         });
-        methods.add_method("pause", |_, cb, ()| {
-            cb.sender.send(Message::Pause).unwrap();
+        methods.add_method("pause", |_, cb, value| {
+            let id = cb.screen_id(value)?;
+            cb.sender.send(Message::Pause(id)).unwrap();
             Ok(())
         });
-        methods.add_method("unpause", |_, cb, ()| {
-            cb.sender.send(Message::Unpause).unwrap();
+        methods.add_method("unpause", |_, cb, value| {
+            let id = cb.screen_id(value)?;
+            cb.sender.send(Message::Unpause(id)).unwrap();
             Ok(())
         });
-        methods.add_method("set_fg", |_, cb, value: Value| {
+        methods.add_method("set_fg", |_, cb, (color_value, id)| {
             let mut color = SolidSource {
                 r: 0,
                 g: 0,
                 b: 0,
                 a: 0,
             };
-            lua_color(&mut color, value)?;
-            cb.sender.send(Message::SetFg(color)).unwrap();
+
+            let id = cb.screen_id(id)?;
+            lua_color(&mut color, color_value)?;
+
+            cb.sender.send(Message::SetFg(color, id)).unwrap();
+            Ok(())
+        });
+
+        methods.add_method("save", |_, cb, id| {
+            let id = cb.screen_id(id)?;
+            cb.sender.send(Message::Save(id)).unwrap();
             Ok(())
         });
 
@@ -302,12 +360,41 @@ impl UserData for LuaOutPut {
 }
 
 impl Events for LuaBindings {
+    fn init(r: &mut Runtime<Self>) {
+        let lua = &r.data.lua.clone();
+        // let current_output
+
+        let cb = Callback {
+            sender: r.data.sender.as_ref().unwrap().clone(),
+            screen_id: Some(0),
+        };
+
+        emit_sync_callback(lua, ("init".to_owned(), cb)).expect("callback failed");
+    }
+
+    fn destroy_output(r: &mut Runtime<Self>, output_id: u32) {
+        let lua = &r.data.lua.clone();
+
+        let cb = Callback {
+            sender: r.data.sender.as_ref().unwrap().clone(),
+            screen_id: Some(0),
+        };
+
+        emit_sync_callback(lua, ("destroy_output".to_owned(), (cb, output_id)))
+            .expect("callback failed");
+    }
+
     fn new_output(r: &mut Runtime<Self>, output: &mut OutPut) {
         let lua = &r.data.lua.clone();
 
+        let cb = Callback {
+            sender: r.data.sender.as_ref().unwrap().clone(),
+            screen_id: Some(0),
+        };
+
         let args = LuaOutPut(output.info.clone());
 
-        emit_sync_callback(lua, ("new_output".to_owned(), args)).expect("callback failed");
+        emit_sync_callback(lua, ("new_output".to_owned(), (cb, args))).expect("callback failed");
     }
 
     fn keybinding(r: &mut Runtime<Self>, event: KeyEvent, press: bool) {
@@ -323,6 +410,7 @@ impl Events for LuaBindings {
 
         let cb = Callback {
             sender: r.data.sender.as_ref().unwrap().clone(),
+            screen_id: Some(0),
         };
 
         emit_sync_callback(lua, ("keypress".to_owned(), (cb, args, press)))
@@ -340,6 +428,7 @@ impl Events for LuaBindings {
         };
         let cb = Callback {
             sender: r.data.sender.as_ref().unwrap().clone(),
+            screen_id: Some(0),
         };
 
         // r.start_drawing(Box::new(Pen::new()));

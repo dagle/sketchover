@@ -48,6 +48,7 @@ pub struct OutPut {
     pub configured: bool,
     pub draws: Vec<Box<dyn Tool>>,
     pub screencopy: Option<ScreenCopy>,
+    pub fgcolor: raqote::SolidSource,
 }
 
 // do not use json
@@ -66,6 +67,43 @@ impl Serialize for OutPut {
 }
 
 impl OutPut {
+    pub fn new(
+        output: wl_output::WlOutput,
+        width: u32,
+        height: u32,
+        info: OutputInfo,
+        mut pool: SlotPool,
+        layer: LayerSurface,
+    ) -> Self {
+        let buffers = Buffers::new(&mut pool, width, height, wl_shm::Format::Argb8888);
+
+        let fgcolor = raqote::SolidSource {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        };
+
+        OutPut {
+            output,
+            width,
+            height,
+            info,
+            pool,
+            layer,
+            buffers,
+            configured: false,
+            draws: Vec::new(),
+            screencopy: None,
+            interactivity: KeyboardInteractivity::Exclusive,
+            fgcolor,
+        }
+    }
+
+    pub fn set_fg(&mut self, color: raqote::SolidSource) {
+        self.fgcolor = color;
+    }
+
     pub fn set_screen_copy(
         &mut self,
         conn: &Connection,
@@ -79,6 +117,15 @@ impl OutPut {
             None
         }
     }
+
+    pub fn clear(&mut self) {
+        self.draws = Vec::new();
+    }
+
+    pub fn undo(&mut self) {
+        self.draws.pop();
+    }
+
     pub fn set_enable(&mut self, enable: bool) {
         if enable {
             self.layer
@@ -88,6 +135,16 @@ impl OutPut {
                 .set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         }
     }
+
+    pub fn save(&mut self, path: &str) -> Result<(), Box<dyn error::Error>> {
+        // Something like this
+        // let file_path = path.as_ref() + self.info.name;
+
+        let file = File::create(path)?;
+        serde_json::to_writer(file, self)?;
+        Ok(())
+    }
+
     pub fn restore(&mut self, path: &str) -> Result<(), Box<dyn error::Error>> {
         // let saved: Vec<Saved> = File::open(path)
         //     .ok()

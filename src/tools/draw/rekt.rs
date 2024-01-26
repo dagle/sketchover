@@ -1,4 +1,4 @@
-use raqote::{DrawTarget, StrokeStyle};
+use raqote::DrawTarget;
 
 use crate::tools::draw::draw;
 use crate::tools::draw::draw::Draw;
@@ -8,8 +8,8 @@ pub struct Rect {
     draw: Draw,
     start: (f64, f64),
     stop: (f64, f64),
-    square: bool,
-    fill: bool,
+    _square: bool,
+    _fill: bool,
 }
 
 impl Rect {
@@ -18,8 +18,8 @@ impl Rect {
             draw,
             start: pos,
             stop: (20.0, 20.0),
-            square: false,
-            fill: false,
+            _square: false,
+            _fill: false,
         }
     }
 }

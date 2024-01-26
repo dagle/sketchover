@@ -338,10 +338,10 @@ impl<D: Events + 'static> CompositorHandler for Runtime<D> {
 
     fn transform_changed(
         &mut self,
-        conn: &Connection,
-        qh: &QueueHandle<Self>,
-        surface: &wl_surface::WlSurface,
-        new_transform: wl_output::Transform,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _surface: &wl_surface::WlSurface,
+        _new_transform: wl_output::Transform,
     ) {
         println!("Transform not implemented, your drawing might be weird");
     }
@@ -503,7 +503,7 @@ impl<D: Events + 'static> SeatHandler for Runtime<D> {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        let mut rt = runtime!(self);
+        let rt = runtime!(self);
         if capability == Capability::Keyboard && rt.keyboard.is_none() {
             let keyboard = rt
                 .seat_state
@@ -570,7 +570,7 @@ impl<D: Events + 'static> KeyboardHandler for Runtime<D> {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _: &wl_keyboard::WlKeyboard,
-        id: u32,
+        _id: u32,
         event: KeyEvent,
     ) {
         // Esc is hardcoded
@@ -604,7 +604,7 @@ impl<D: Events + 'static> KeyboardHandler for Runtime<D> {
         if let Some(idx) = self.current_output {
             let output = &mut self.outputs[idx];
             if self.drawing {
-                if let Some(last) = output.draws.last_mut() {
+                if let Some(_last) = output.draws.last_mut() {
                     // TODO: Add modifier
                     // last.update(None, &self.modifiers);
                 }

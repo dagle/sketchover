@@ -24,7 +24,7 @@ pub trait Tool: Send {
     /// A tool sould be able to have a set of modifiers width
     /// it. Atm these are hardcoded against keys but in the future
     /// these should be mapped against a config value.
-    fn modifier(&mut self, modifier: &Modifiers) {
+    fn modifier(&mut self, _: &Modifiers) {
         return;
     }
     /// For drawing the size of the figure

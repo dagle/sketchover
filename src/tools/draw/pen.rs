@@ -1,4 +1,4 @@
-use raqote::{DrawTarget, StrokeStyle};
+use raqote::DrawTarget;
 
 use crate::tools::draw::draw::Draw;
 use crate::tools::Tool;

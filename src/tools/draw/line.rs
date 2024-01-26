@@ -1,5 +1,4 @@
-use raqote::{DrawTarget, StrokeStyle};
-// TODO: Remove
+use raqote::DrawTarget;
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 use crate::tools::draw::draw::Draw;

@@ -362,11 +362,11 @@ impl UserData for LuaOutPut {
 impl Events for LuaBindings {
     fn init(r: &mut Runtime<Self>) {
         let lua = &r.data.lua.clone();
-        // let current_output
+        let id = r.current_output_id();
 
         let cb = Callback {
             sender: r.data.sender.as_ref().unwrap().clone(),
-            screen_id: Some(0),
+            screen_id: id,
         };
 
         emit_sync_callback(lua, ("init".to_owned(), cb)).expect("callback failed");
@@ -374,10 +374,11 @@ impl Events for LuaBindings {
 
     fn destroy_output(r: &mut Runtime<Self>, output_id: u32) {
         let lua = &r.data.lua.clone();
+        let id = r.current_output_id();
 
         let cb = Callback {
             sender: r.data.sender.as_ref().unwrap().clone(),
-            screen_id: Some(0),
+            screen_id: id,
         };
 
         emit_sync_callback(lua, ("destroy_output".to_owned(), (cb, output_id)))
@@ -386,10 +387,11 @@ impl Events for LuaBindings {
 
     fn new_output(r: &mut Runtime<Self>, output: &mut OutPut) {
         let lua = &r.data.lua.clone();
+        let id = r.current_output_id();
 
         let cb = Callback {
             sender: r.data.sender.as_ref().unwrap().clone(),
-            screen_id: Some(0),
+            screen_id: id,
         };
 
         let args = LuaOutPut(output.info.clone());
@@ -401,6 +403,7 @@ impl Events for LuaBindings {
         let lua = &r.data.lua.clone();
         let modifiers = r.modifiers();
         let pos = r.pos();
+        let id = r.current_output_id();
 
         let args = LuaKeyEvent {
             modifiers,
@@ -410,7 +413,7 @@ impl Events for LuaBindings {
 
         let cb = Callback {
             sender: r.data.sender.as_ref().unwrap().clone(),
-            screen_id: Some(0),
+            screen_id: id,
         };
 
         emit_sync_callback(lua, ("keypress".to_owned(), (cb, args, press)))
@@ -420,6 +423,7 @@ impl Events for LuaBindings {
         let lua = &r.data.lua.clone();
         let modifiers = r.modifiers();
         let pos = r.pos();
+        let id = r.current_output_id();
 
         let args = MouseEvent {
             modifiers,
@@ -428,7 +432,7 @@ impl Events for LuaBindings {
         };
         let cb = Callback {
             sender: r.data.sender.as_ref().unwrap().clone(),
-            screen_id: Some(0),
+            screen_id: id,
         };
 
         // r.start_drawing(Box::new(Pen::new()));

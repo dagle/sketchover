@@ -98,6 +98,10 @@ pub struct Runtime<D> {
 
 // impl<D: Bindable> Runtime<D> {
 impl<D: Events + 'static> Runtime<D> {
+    pub fn current_output_id(&self) -> Option<u32> {
+        self.current_output.map(|x| self.outputs[x].info.id)
+    }
+
     pub fn init(data: D) -> Runtime<D> {
         let runtime = Runtime {
             data,
@@ -290,7 +294,6 @@ impl<D: Events + 'static> Runtime<D> {
                 dt.clear(output.fgcolor);
             }
 
-            // println!("out: {}", output.draws.len());
             for draw in output.draws.iter() {
                 draw.draw(&mut dt);
             }

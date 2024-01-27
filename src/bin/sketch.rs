@@ -5,8 +5,11 @@ use sketchover::output::OutPut;
 use sketchover::runtime::Events;
 use sketchover::runtime::Runtime;
 use sketchover::tools::draw::draw::Draw;
+use sketchover::tools::draw::line::Line;
 use sketchover::tools::draw::pen::Pen;
 use smithay_client_toolkit::seat::keyboard::KeyEvent;
+use xkbcommon::xkb::keysyms;
+use xkbcommon::xkb::keysyms::KEY_P;
 use xkbcommon::xkb::keysyms::KEY_Q;
 use xkbcommon::xkb::keysyms::KEY_S;
 
@@ -57,17 +60,28 @@ impl Events for Bindings {
 
     fn keybinding(r: &mut Runtime<Self>, event: KeyEvent, press: bool) {
         let modifier = r.modifiers();
+        let id = r.current_output_id();
 
         if !press {
             return;
         }
 
         match event.keysym.raw() {
-            KEY_Q if modifier.shift == true => {
+            keysyms::KEY_Q if modifier.shift == true => {
                 r.exit();
             }
-            KEY_S => {
+            keysyms::KEY_S => {
                 r.data.save = true;
+            }
+            keysyms::KEY_P => {
+                if let Some(id) = id {
+                    r.set_pause(true, id);
+                }
+            }
+            keysyms::KEY_N => {
+                if let Some(id) = id {
+                    r.set_pause(false, id);
+                }
             }
             _ => {}
         }
@@ -78,11 +92,12 @@ impl Events for Bindings {
 
         if !press {
             r.stop_drawing();
+            return;
         }
 
         match mouse {
             MouseEvent::BtnLeft => {
-                r.start_drawing(Box::new(Pen::new(r.pos(), Draw::default())));
+                r.start_drawing(Box::new(Line::new(r.pos(), Draw::default())));
             }
             _ => {}
         }

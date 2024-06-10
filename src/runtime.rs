@@ -212,21 +212,28 @@ impl<D: Events + 'static> Runtime<D> {
             output.draws.pop();
         }
     }
-    pub fn locate_output(&mut self, id: u32) -> Option<&mut OutPut> {
-        for output in self.outputs.iter_mut() {
-            if output.info.id == id {
-                return Some(output);
+    pub fn locate_output(&mut self, id: Option<u32>) -> Option<&mut OutPut> {
+        if let Some(id) = id {
+            for output in self.outputs.iter_mut() {
+                if output.info.id == id {
+                    return Some(output);
+                }
             }
+            None
+        } else {
+            Some(&mut self.outputs[self.current_output.unwrap()])
         }
-        None
     }
-    pub fn locate_output_idx(&mut self, id: u32) -> Option<usize> {
-        for (i, output) in self.outputs.iter_mut().enumerate() {
-            if output.info.id == id {
-                return Some(i);
+    pub fn locate_output_idx(&mut self, id: Option<u32>) -> Option<usize> {
+        if let Some(id) = id {
+            for (i, output) in self.outputs.iter().enumerate() {
+                if output.info.id == id {
+                    return Some(i);
+                }
             }
+            return None;
         }
-        None
+        self.current_output
     }
 
     // TODO: Remove
@@ -236,14 +243,11 @@ impl<D: Events + 'static> Runtime<D> {
     //     }
     // }
 
-    pub fn set_pause(&mut self, pause: bool, id: u32) {
-        // remove unwraps
-        let idx = self.locate_output_idx(id).unwrap();
-        let output = self.outputs.get_mut(idx).unwrap();
+    pub fn set_pause(&mut self, pause: bool, id: usize) {
+        let output = self.outputs.get_mut(id).expect("Can't get screen");
         if let Some(ref rt) = self.wl_runtime {
             output.set_screen_copy(&rt.conn, &rt.globals, &rt.shm, pause);
         }
-        // }
     }
 
     // TODO: Remove

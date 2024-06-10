@@ -24,14 +24,14 @@ struct LuaBindings {
 }
 
 enum Message {
-    Clear(u32),
+    Clear(Option<u32>),
     Quit,
-    Undo(u32),
-    Pause(u32),
-    Unpause(u32),
-    Save(u32),
+    Undo(Option<u32>),
+    Pause(Option<u32>),
+    Unpause(Option<u32>),
+    Save(Option<u32>),
 
-    SetFg(SolidSource, u32),
+    SetFg(SolidSource, Option<u32>),
     StopDraw,
     Drawing(String, (f64, f64), Draw),
 }
@@ -88,32 +88,45 @@ impl UserData for RuntimeData {
                     |event, _, rt: &mut Runtime<LuaBindings>| match event {
                         calloop::channel::Event::Msg(m) => match m {
                             Message::Clear(id) => {
-                                let output = rt.locate_output(id).unwrap();
+                                let output = rt.locate_output(id).expect("couldn't find screen");
                                 output.clear();
                             }
                             Message::Quit => rt.exit(),
                             Message::Undo(id) => {
-                                println!("{:?}", id);
-                                // let output = rt.locate_output(id).unwrap();
-                                // output.undo();
+                                let output = rt.locate_output(id).unwrap();
+                                output.undo();
                             }
-                            Message::Unpause(id) => rt.set_pause(false, id),
-                            Message::Pause(id) => rt.set_pause(true, id),
+                            Message::Unpause(id) => {
+                                let id = rt
+                                    .locate_output_idx(id)
+                                    .expect("Can't find screen to unpause");
+                                rt.set_pause(false, id);
+                            }
+
+                            Message::Pause(id) => {
+                                let id = rt
+                                    .locate_output_idx(id)
+                                    .expect("Can't find screen to pause");
+                                rt.set_pause(true, id);
+                            }
                             Message::SetFg(solid, id) => {
                                 let output = rt.locate_output(id).unwrap();
                                 output.set_fg(solid);
                             }
                             Message::Save(id) => {
                                 let output = rt.locate_output(id).unwrap();
-                                output.save("sketchover");
+                                output.save("sketchover").expect("couldn't save output");
                             }
                             Message::StopDraw => rt.stop_drawing(),
-                            Message::Drawing(s, pos, draw) => match s.as_ref() {
-                                "pen" => rt.start_drawing(Box::new(Pen::new(pos, draw))),
-                                "rect" => rt.start_drawing(Box::new(Rect::new(pos, draw))),
-                                "line" => rt.start_drawing(Box::new(Line::new(pos, draw))),
-                                _ => panic!("tool doesn't exist"),
-                            },
+                            Message::Drawing(s, pos, draw) => {
+                                // println!("draw: {:?}", draw);
+                                match s.as_ref() {
+                                    "pen" => rt.start_drawing(Box::new(Pen::new(pos, draw))),
+                                    "rect" => rt.start_drawing(Box::new(Rect::new(pos, draw))),
+                                    "line" => rt.start_drawing(Box::new(Line::new(pos, draw))),
+                                    _ => panic!("tool doesn't exist"),
+                                }
+                            }
                         },
                         calloop::channel::Event::Closed => {
                             rt.exit();
@@ -200,18 +213,10 @@ struct Callback {
 }
 
 impl Callback {
-    fn screen_id(&self, value: Value) -> mlua::Result<u32> {
+    fn screen_id(&self, value: Value) -> mlua::Result<Option<u32>> {
         match value {
-            Value::Nil => {
-                if let Some(id) = self.screen_id {
-                    Ok(id)
-                } else {
-                    Err(Error::RuntimeError(
-                        "No active screen and no screen chosen".to_owned(),
-                    ))
-                }
-            }
-            Value::Number(n) => Ok(n as u32),
+            Value::Nil => Ok(None),
+            Value::Number(n) => Ok(Some(n as u32)),
             wat => Err(Error::RuntimeError(format!(
                 "Expected number or nil, got: {}",
                 wat.type_name()
@@ -485,7 +490,7 @@ pub fn lua_color<'lua>(color: &mut SolidSource, value: Value<'lua>) -> mlua::Res
             set!(color.r, t.get("r"));
             set!(color.g, t.get("g"));
             set!(color.b, t.get("b"));
-            set!(color.a, t.get("r"));
+            set!(color.a, t.get("a"));
             Ok(())
         }
         _ => {

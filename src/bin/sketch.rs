@@ -119,7 +119,7 @@ fn main() {
             Signals::new(&[Signal::SIGTSTP]).unwrap(),
             move |evt, &mut (), runtime: &mut Runtime<Bindings>| {
                 if evt.signal() == Signal::SIGTSTP {
-                    runtime.set_passthrough(true);
+                    // runtime.set_passthrough(true);
                 }
             },
         )

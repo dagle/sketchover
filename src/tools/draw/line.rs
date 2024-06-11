@@ -3,7 +3,9 @@ use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 use crate::tools::draw::draw::Draw;
 use crate::tools::Tool;
+use serde::Serialize;
 
+#[derive(Serialize)]
 pub struct Line {
     draw: Draw,
     start: (f64, f64),

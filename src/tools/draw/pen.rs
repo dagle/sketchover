@@ -2,7 +2,9 @@ use raqote::DrawTarget;
 
 use crate::tools::draw::draw::Draw;
 use crate::tools::Tool;
+use serde::Serialize;
 
+#[derive(Serialize)]
 pub struct Pen {
     draw: Draw,
     lines: Vec<(f64, f64)>,

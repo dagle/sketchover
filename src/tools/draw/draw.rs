@@ -4,6 +4,7 @@
 
 use core::fmt;
 
+use hex_color::{HexColor, ParseHexColorError};
 use raqote::{LineCap, LineJoin, SolidSource, StrokeStyle};
 use serde::{
     de::{self, MapAccess, SeqAccess, Visitor},
@@ -16,6 +17,109 @@ pub struct Draw {
     pub style: StrokeStyle,
     pub color: SolidSource,
     // pub distance: bool,
+}
+
+impl Serialize for Draw {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("Draw", 5)?;
+        let style: StrokeStyleSerialize = (&self.style).into();
+        state.serialize_field("style", &style)?;
+        let colorstr = format!(
+            "#{:02x}{:02x}{:02x}{:02x}",
+            self.color.r, self.color.g, self.color.b, self.color.a
+        );
+        state.serialize_field("color", &colorstr)?;
+        state.end()
+    }
+}
+
+fn parse_solid(str: &str) -> Result<SolidSource, ParseHexColorError> {
+    let hex = HexColor::parse(str)?;
+    Ok(SolidSource {
+        r: hex.r,
+        g: hex.g,
+        b: hex.b,
+        a: hex.a,
+    })
+}
+
+impl<'de> Deserialize<'de> for Draw {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field {
+            Style,
+            Color,
+        }
+
+        struct DrawVisitor;
+
+        impl<'de> Visitor<'de> for DrawVisitor {
+            type Value = Draw;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct Draw")
+            }
+
+            fn visit_seq<V>(self, mut seq: V) -> Result<Draw, V::Error>
+            where
+                V: SeqAccess<'de>,
+            {
+                let style: StrokeStyleSerialize = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                let color_str: String = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(3, &self))?;
+                let color = parse_solid(&color_str).map_err(de::Error::custom)?;
+
+                Ok(Draw {
+                    style: style.into(),
+                    color,
+                })
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Draw, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut style: Option<StrokeStyleSerialize> = None;
+                let mut color = None;
+                while let Some(f) = map.next_key()? {
+                    match f {
+                        Field::Style => {
+                            if style.is_some() {
+                                return Err(de::Error::duplicate_field("style"));
+                            }
+                            style = Some(map.next_value()?);
+                        }
+                        Field::Color => {
+                            if color.is_some() {
+                                return Err(de::Error::duplicate_field("color"));
+                            }
+                            let color_str: String = map.next_value()?;
+                            color = Some(parse_solid(&color_str).map_err(de::Error::custom)?);
+                        }
+                    }
+                }
+                let style = style.ok_or_else(|| de::Error::missing_field("style"))?;
+                let color = color.ok_or_else(|| de::Error::missing_field("color"))?;
+                Ok(Draw {
+                    style: style.into(),
+                    color,
+                })
+            }
+        }
+
+        const FIELDS: &'static [&'static str] = &["style", "color"];
+        deserializer.deserialize_struct("Draw", FIELDS, DrawVisitor)
+    }
 }
 
 impl Default for Draw {

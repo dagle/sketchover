@@ -1,5 +1,6 @@
 use std::error;
 use std::fs::File;
+use std::path::Path;
 
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use smithay_client_toolkit::shm::slot::Buffer;
@@ -61,7 +62,7 @@ impl Serialize for OutPut {
         state.serialize_field("id", &self.info.id)?;
         state.serialize_field("model", &self.info.model)?;
         state.serialize_field("make", &self.info.make)?;
-        // state.serialize_field("draws", &self.draws)?;
+        state.serialize_field("draws", &self.draws)?;
         state.end()
     }
 }
@@ -136,7 +137,8 @@ impl OutPut {
         }
     }
 
-    pub fn save(&mut self, path: &str) -> Result<(), Box<dyn error::Error>> {
+    pub fn save<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Box<dyn error::Error>> {
+        // pub fn save(&mut self, path: &str) -> Result<(), Box<dyn error::Error>> {
         // Something like this
         // let file_path = path.as_ref() + self.info.name;
 

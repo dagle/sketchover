@@ -30,6 +30,7 @@ enum Message {
     Pause(Option<u32>),
     Unpause(Option<u32>),
     Save(Option<u32>),
+    SaveAll,
 
     SetFg(SolidSource, Option<u32>),
     StopDraw,
@@ -116,6 +117,9 @@ impl UserData for RuntimeData {
                             Message::Save(id) => {
                                 let output = rt.locate_output(id).unwrap();
                                 output.save("sketchover").expect("couldn't save output");
+                            }
+                            Message::SaveAll => {
+                                rt.save_all("sketchover").expect("Couldn't save all output");
                             }
                             Message::StopDraw => rt.stop_drawing(),
                             Message::Drawing(s, pos, draw) => {

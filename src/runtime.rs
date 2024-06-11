@@ -1,3 +1,7 @@
+use std::error;
+use std::fs::File;
+use std::path::Path;
+
 use calloop::{EventLoop, LoopSignal};
 use cursor_icon::CursorIcon;
 use smithay_client_toolkit::compositor::CompositorHandler;
@@ -176,15 +180,28 @@ impl<D: Events + 'static> Runtime<D> {
         self.last_pos.unwrap_or((0.0, 0.0))
     }
 
+    /// Stop drawing
     pub fn stop_drawing(&mut self) {
         self.drawing = false;
     }
 
+    /// Start drawing using the specified tool
+    /// We will draw until stop drawing is called.
     pub fn start_drawing(&mut self, tool: Box<dyn Tool>) {
         if let Some(idx) = self.current_output {
             self.drawing = true;
             self.outputs[idx].start_draw(tool);
         }
+    }
+
+    /// Save all outputs to path
+    /// To be able to resume later on
+    pub fn save_all<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Box<dyn error::Error>> {
+        let file = File::create(path)?;
+        for output in self.outputs.iter() {
+            serde_json::to_writer(&file, output)?;
+        }
+        Ok(())
     }
 
     pub fn exit(&self) {

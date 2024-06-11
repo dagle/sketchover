@@ -3,7 +3,9 @@ use raqote::DrawTarget;
 use crate::tools::draw::draw;
 use crate::tools::draw::draw::Draw;
 use crate::tools::Tool;
+use serde::Serialize;
 
+#[derive(Serialize)]
 pub struct Rect {
     draw: Draw,
     start: (f64, f64),

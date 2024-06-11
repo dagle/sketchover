@@ -1,14 +1,12 @@
 use raqote::{DrawTarget, Point};
 
-// use serde::{Deserializer, Serializer};
+use erased_serde::serialize_trait_object;
 use smithay_client_toolkit::seat::keyboard::Modifiers;
 
 pub mod draw;
 
-// impl<'de> Deserialize<'de> for StrokeStyleSerialize {
-// }
-// pub trait Tool: Serializer + for<'de> Deserializer<'de> {
-pub trait Tool: Send {
+// #[typetag::serde(tag = "apa")]
+pub trait Tool: Send + erased_serde::Serialize {
     /// When the mouse is moved, the currently active (if there is one) tool
     /// will be updated,
     fn update(&mut self, motion: (f64, f64));
@@ -32,3 +30,5 @@ pub trait Tool: Send {
         None
     }
 }
+
+serialize_trait_object!(Tool);

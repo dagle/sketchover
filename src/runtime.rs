@@ -32,7 +32,7 @@ use wayland_client::globals::GlobalList;
 use xkbcommon::xkb::keysyms;
 
 use crate::mousemap::{Mouse, MouseMap};
-use crate::output::{Buffers, OutPut};
+use crate::output::OutPut;
 use crate::tools::Tool;
 
 pub trait Events {
@@ -103,7 +103,7 @@ impl<D: Events + 'static> Runtime<D> {
     }
 
     pub fn init(data: D) -> Runtime<D> {
-        let runtime = Runtime {
+        Runtime {
             data,
             wl_runtime: None,
             current_output: None,
@@ -113,8 +113,7 @@ impl<D: Events + 'static> Runtime<D> {
             last_serial: None,
             modifiers: Modifiers::default(),
             cursor_icon: CursorIcon::Default,
-        };
-        runtime
+        }
     }
 
     pub fn run(&mut self, mut event_loop: EventLoop<Runtime<D>>) {
@@ -200,11 +199,9 @@ impl<D: Events + 'static> Runtime<D> {
             for output in self.outputs.iter_mut() {
                 output.draws = Vec::new();
             }
-        } else {
-            if let Some(idx) = self.current_output {
-                let output = &mut self.outputs[idx];
-                output.draws = Vec::new();
-            }
+        } else if let Some(idx) = self.current_output {
+            let output = &mut self.outputs[idx];
+            output.draws = Vec::new();
         }
     }
 
@@ -412,25 +409,10 @@ impl<D: Events + 'static> OutputHandler for Runtime<D> {
 
         layer.commit();
 
-        let mut pool = SlotPool::new(width as usize * height as usize * 4, &rt.shm)
+        let pool = SlotPool::new(width as usize * height as usize * 4, &rt.shm)
             .expect("Failed to create pool");
 
-        let buffers = Buffers::new(&mut pool, width, height, wl_shm::Format::Argb8888);
         let mut output = OutPut::new(output, width, height, info, pool, layer);
-
-        // let mut output = OutPut {
-        //     output,
-        //     width,
-        //     height,
-        //     info,
-        //     pool,
-        //     layer,
-        //     buffers,
-        //     configured: false,
-        //     draws,
-        //     screencopy: None,
-        //     interactivity: KeyboardInteractivity::Exclusive,
-        // };
 
         D::new_output(self, &mut output);
         self.outputs.push(output);
@@ -695,6 +677,7 @@ impl<D: Events + 'static> PointerHandler for Runtime<D> {
                     } else {
                         return;
                     };
+                    // TODO: Handle these
                     let mouse_map = MouseMap {
                         event: action,
                         modifier: self.modifiers,

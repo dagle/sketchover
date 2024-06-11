@@ -5,13 +5,9 @@ use sketchover::output::OutPut;
 use sketchover::runtime::Events;
 use sketchover::runtime::Runtime;
 use sketchover::tools::draw::draw::Draw;
-use sketchover::tools::draw::line::Line;
 use sketchover::tools::draw::pen::Pen;
 use smithay_client_toolkit::seat::keyboard::KeyEvent;
 use xkbcommon::xkb::keysyms;
-use xkbcommon::xkb::keysyms::KEY_P;
-use xkbcommon::xkb::keysyms::KEY_Q;
-use xkbcommon::xkb::keysyms::KEY_S;
 
 struct Bindings {
     outputs: Vec<String>,
@@ -60,7 +56,6 @@ impl Events for Bindings {
 
     fn keybinding(r: &mut Runtime<Self>, event: KeyEvent, press: bool) {
         let modifier = r.modifiers();
-        let id = r.current_output_id();
 
         if !press {
             return;
@@ -97,9 +92,10 @@ impl Events for Bindings {
             return;
         }
 
+        #[allow(clippy::single_match)]
         match mouse {
             MouseEvent::BtnLeft => {
-                r.start_drawing(Box::new(Line::new(r.pos(), Draw::default())));
+                r.start_drawing(Box::new(Pen::new(r.pos(), Draw::default())));
             }
             _ => {}
         }

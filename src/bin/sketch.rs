@@ -67,21 +67,23 @@ impl Events for Bindings {
         }
 
         match event.keysym.raw() {
-            keysyms::KEY_Q if modifier.shift == true => {
+            keysyms::KEY_Q if modifier.shift => {
                 r.exit();
             }
             keysyms::KEY_S => {
                 r.data.save = true;
             }
             keysyms::KEY_P => {
-                if let Some(id) = id {
-                    r.set_pause(true, id);
-                }
+                let idx = r
+                    .locate_output_idx(None)
+                    .expect("Can't find screen to pause");
+                r.set_pause(true, idx);
             }
             keysyms::KEY_N => {
-                if let Some(id) = id {
-                    r.set_pause(false, id);
-                }
+                let idx = r
+                    .locate_output_idx(None)
+                    .expect("Can't find screen to pause");
+                r.set_pause(false, idx);
             }
             _ => {}
         }

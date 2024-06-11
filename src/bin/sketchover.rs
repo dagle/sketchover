@@ -445,7 +445,7 @@ impl Events for LuaBindings {
             .expect("callback failed");
     }
 }
-pub fn table_to_draw<'lua>(table: Table<'lua>) -> mlua::Result<Draw> {
+pub fn table_to_draw(table: Table) -> mlua::Result<Draw> {
     let mut default = Draw::default();
     if let Ok(v) = table.get("style") {
         lua_style(&mut default.style, v)?;
@@ -456,7 +456,7 @@ pub fn table_to_draw<'lua>(table: Table<'lua>) -> mlua::Result<Draw> {
     Ok(default)
 }
 
-pub fn lua_style<'lua>(style: &mut StrokeStyle, value: Value<'lua>) -> mlua::Result<()> {
+pub fn lua_style(style: &mut StrokeStyle, value: Value) -> mlua::Result<()> {
     match value {
         Value::Nil => Ok(()),
         Value::Table(t) => {
@@ -473,17 +473,15 @@ pub fn lua_style<'lua>(style: &mut StrokeStyle, value: Value<'lua>) -> mlua::Res
             set!(style.dash_offset, t.get("dash_offset"));
             Ok(())
         }
-        _ => {
-            return Err(Error::FromLuaConversionError {
-                from: "string",
-                to: "LineJoin",
-                message: None,
-            })
-        }
+        _ => Err(Error::FromLuaConversionError {
+            from: "string",
+            to: "LineJoin",
+            message: None,
+        }),
     }
 }
 
-pub fn lua_color<'lua>(color: &mut SolidSource, value: Value<'lua>) -> mlua::Result<()> {
+pub fn lua_color(color: &mut SolidSource, value: Value) -> mlua::Result<()> {
     match value {
         Value::Nil => Ok(()),
         Value::Table(t) => {
@@ -493,13 +491,11 @@ pub fn lua_color<'lua>(color: &mut SolidSource, value: Value<'lua>) -> mlua::Res
             set!(color.a, t.get("a"));
             Ok(())
         }
-        _ => {
-            return Err(Error::FromLuaConversionError {
-                from: "string",
-                to: "LineJoin",
-                message: None,
-            })
-        }
+        _ => Err(Error::FromLuaConversionError {
+            from: "string",
+            to: "LineJoin",
+            message: None,
+        }),
     }
 }
 
@@ -514,7 +510,7 @@ where
     let tbl: mlua::Value = lua.named_registry_value(&decorated_name)?;
     match tbl {
         Value::Table(tbl) => {
-            for func in tbl.sequence_values::<mlua::Function>() {
+            if let Some(func) = tbl.sequence_values::<mlua::Function>().next() {
                 let func = func?;
                 return func.call(args);
             }
@@ -524,10 +520,7 @@ where
     }
 }
 
-pub fn register_event<'lua>(
-    lua: &'lua Lua,
-    (name, func): (String, mlua::Function),
-) -> mlua::Result<()> {
+pub fn register_event(lua: &Lua, (name, func): (String, mlua::Function)) -> mlua::Result<()> {
     let register_name = format!("sketchover-event-{}", name);
     let tbl: mlua::Value = lua.named_registry_value(&register_name)?;
     match tbl {
